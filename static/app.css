@@ -160,6 +160,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .winner .meta { flex: 1; min-width: 0; }
 .winner .headline { font-size: 18px; font-weight: 600; }
 .winner .walk { font-size: 14px; color: var(--muted); margin-top: 2px; }
+.winner .ride { font-size: 14px; color: var(--muted); margin-top: 2px; }
 .winner .he {
   font-size: 13px;
   color: var(--muted);

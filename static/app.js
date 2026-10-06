@@ -142,12 +142,16 @@ function render(data) {
   }
 
   const lineList = best.lines.join(", ");
+  const rideMin = best.ride_min != null ? `Ride ${Math.round(best.ride_min)} min` : "";
+  const returnMin = best.return_min != null ? `Return ${Math.round(best.return_min)} min` : "";
+  const rideHtml = [rideMin, returnMin].filter(Boolean).join(" &middot; ");
   const winner = document.getElementById("winner");
   winner.innerHTML = `
     <div class="badge">${best.lines[0]}</div>
     <div class="meta">
       <div class="headline">Line ${lineList} &mdash; ${best.name_en}</div>
       <div class="walk">${stopNumbersFor(best)} ${codeLabel(best)} ${estMark(best)}${walkLabel(best.walk_min)} &middot; ${best.walk_m} m</div>
+      <div class="ride">${rideHtml}</div>
     </div>`;
   heName(winner.querySelector(".meta"), best.name_he);
   resultEl.hidden = false;
