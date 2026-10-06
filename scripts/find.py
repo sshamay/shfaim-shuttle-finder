@@ -127,7 +127,7 @@ def _pick_router() -> str | None:
     found: str | None = None
     for base in config.VALHALLA_URLS:
         try:
-            httpx.get(base.rsplit("/", 1)[0] + "/status", timeout=3).raise_for_status()
+            httpx.get(base.rsplit("/", 1)[0] + "/status", timeout=config.VALHALLA_PROBE_TIMEOUT_S).raise_for_status()
             found = base
             break
         except Exception:  # noqa: BLE001,S110
