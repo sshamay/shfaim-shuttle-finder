@@ -200,9 +200,11 @@ def _stop(
 
 # Eight stops on a single line, spread north from the origin. Gives tests more
 # stops than the default display limit of five, so `top` truncation is visible
-# instead of being masked by a dataset smaller than the limit.
+# instead of being masked by a dataset smaller than the limit. All eight stay
+# inside the 30-minute walk cutoff: the farthest (0.0016 * 7 deg) walks to
+# ~26 min even with the 1.2 detour factor, so they all survive the filter.
 MANY_STOPS: list[dict[str, Any]] = [
-    _stop(str(i + 1), f"Stop {i + 1}", 32.0700 - i * 0.0020, 34.7900)
+    _stop(str(i + 1), f"Stop {i + 1}", 32.0700 - i * 0.0016, 34.7900)
     for i in range(8)
 ]
 
@@ -263,6 +265,47 @@ def many_stops_cache(
 def cross_served_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Two lines whose closest stops are not the shared stop."""
     return write_cache(monkeypatch, tmp_path, CROSS_SERVED_LINES)
+
+
+# Origin of the nearest fixtures is (32.0747, 34.7920). A stop 0.019° north
+# walks to ~31.7 min at 80 m/min with the 1.2 detour factor — just beyond the
+# 30-minute cutoff — while 0.0018° (~3.5 min) is comfortably inside it.
+CUTOFF_LINES: list[dict[str, Any]] = [
+    {
+        "line": "811",
+        "name": "HaKiriya",
+        "stop_count": 1,
+        "stops": [_stop("n1", "Near", 32.0729, 34.7920, index=1)],
+    },
+    {
+        "line": "813",
+        "name": "Bagin-Hamasger",
+        "stop_count": 1,
+        "stops": [_stop("f1", "Far", 32.0557, 34.7920, index=1)],
+    },
+]
+
+# Every stop is beyond the cutoff, so `find_nearest` has nothing to rank.
+ONLY_FAR_LINES: list[dict[str, Any]] = [
+    {
+        "line": "811",
+        "name": "HaKiriya",
+        "stop_count": 1,
+        "stops": [_stop("f1", "Far", 32.0557, 34.7920, index=1)],
+    },
+]
+
+
+@pytest.fixture
+def cutoff_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """One stop inside the 30-minute walk limit, one far beyond it."""
+    return write_cache(monkeypatch, tmp_path, CUTOFF_LINES)
+
+
+@pytest.fixture
+def only_far_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A route set where no stop is within a 30-minute walk."""
+    return write_cache(monkeypatch, tmp_path, ONLY_FAR_LINES)
 
 
 @pytest.fixture

@@ -15,7 +15,7 @@ import pytest
 
 from app import config
 from scripts import find
-from tests.conftest import valhalla_response
+from tests.conftest import valhalla_response, write_cache
 
 
 class TestHaversine:
@@ -259,6 +259,66 @@ class TestFindNearest:
         mocker.patch.object(find, "_pick_router", lambda: None)
         result = find.find_nearest(32.0747, 34.7920, top=1)
         assert len(result["all_stops"]) == 3
+
+
+class TestWalkTimeCutoff:
+    """Stops beyond a 30-minute walk never surface in any result set."""
+
+    def test_far_stop_is_dropped_everywhere(
+        self, cutoff_cache: Path, mocker
+    ) -> None:
+        mocker.patch.object(find, "_pick_router", lambda: None)
+        result = find.find_nearest(32.0747, 34.7920)
+
+        assert result["best_stop"]["name_en"] == "Near"
+        assert [s["name_en"] for s in result["stops"]] == ["Near"]
+        assert [s["name_en"] for s in result["all_stops"]] == ["Near"]
+
+    def test_line_only_reachable_via_a_far_stop_is_absent(
+        self, cutoff_cache: Path, mocker
+    ) -> None:
+        mocker.patch.object(find, "_pick_router", lambda: None)
+        result = find.find_nearest(32.0747, 34.7920)
+        assert [e["line"] for e in result["lines"]] == ["811"]
+
+    def test_no_stop_within_the_limit_returns_no_results(
+        self, only_far_cache: Path, mocker
+    ) -> None:
+        mocker.patch.object(find, "_pick_router", lambda: None)
+        result = find.find_nearest(32.0747, 34.7920)
+        assert result["best_stop"] is None
+        assert result["stops"] == []
+        assert result["lines"] == []
+        assert result["all_stops"] == []
+
+    def test_cutoff_uses_raw_minutes_not_rounded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+    ) -> None:
+        """29.4 min survives, 30.4 min is cut: the raw value decides."""
+        mocker.patch.object(find, "_pick_router", lambda: None)
+
+        def stop(stop_id: str, name: str, lat: float) -> dict[str, Any]:
+            return {
+                "stop_id": stop_id,
+                "code": stop_id,
+                "name": f"תחנה {name}",
+                "name_en": name,
+                "lat": lat,
+                "lon": 34.7920,
+                "index": int(stop_id),
+                "is_park_and_ride": False,
+            }
+
+        lines = [
+            {"line": "811", "name": "HaKiriya", "stop_count": 2, "stops": [
+                stop("1", "JustInside", 32.0747 - 0.0176),
+                stop("2", "JustOutside", 32.0747 - 0.0182),
+            ]},
+        ]
+        write_cache(monkeypatch, tmp_path, lines)
+        result = find.find_nearest(32.0747, 34.7920)
+
+        assert [s["name_en"] for s in result["all_stops"]] == ["JustInside"]
 
 
 class TestDisplayLimit:

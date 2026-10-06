@@ -23,6 +23,12 @@ WALK_M_PER_MIN = WALK_SPEED_KMH * 1000 / 60
 # straight-line distance otherwise understates how far someone must walk.
 ESTIMATE_DETOUR_FACTOR = 1.2
 
+# Stops farther away than this are dropped from every result set: the site is a
+# "nearest stop" tool, and a 45-minute walk is not a candidate the UI should
+# list. Checked on the raw minutes so a boundary of 30.5 min does not sneak in
+# through a round() rule; the ranking decision uses raw minutes too.
+MAX_WALK_MIN = 30.0
+
 
 def _sign_number_shift(stops: list[dict[str, Any]]) -> int:
     """How far 20fl's ``index`` runs ahead of the number painted on the stop sign.
@@ -195,9 +201,12 @@ def find_nearest(lat: float, lon: float, top: int = 5) -> dict[str, Any]:
 
     ranked = []
     for item in results:
+        minutes = item["walk_m"] / WALK_M_PER_MIN
+        if minutes > MAX_WALK_MIN:
+            continue
         stop = item["stop"]
         stop["walk_m"] = round(item["walk_m"])
-        stop["walk_min"] = round(item["walk_m"] / WALK_M_PER_MIN)
+        stop["walk_min"] = round(minutes)
         stop["is_estimate"] = item["is_estimate"]
         ranked.append(stop)
 

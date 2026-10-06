@@ -338,11 +338,21 @@ class TestRealStopData:
         )
 
     def test_one_entry_per_line(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Per-line suggestions exist, never repeat, and respect the 30-min cutoff.
+
+        The cutoff is origin-dependent, so on real data the contract is: no
+        duplicate lines, nothing outside the five Shefayim lines, every
+        suggestion within walking range, and the metro-line 811 always present
+        from a central point.
+        """
         monkeypatch.setattr(find, "_pick_router", lambda: None)
         result = find.find_nearest(32.0747, 34.7920)
-        assert sorted(entry["line"] for entry in result["lines"]) == [
-            "811", "812", "813", "814", "815",
-        ]
+        entries = result["lines"]
+
+        assert len(entries) == len({e["line"] for e in entries}), "a line repeated"
+        assert {e["line"] for e in entries} <= {"811", "812", "813", "814", "815"}
+        assert all(e["best_stop"]["walk_min"] <= 30 for e in entries)
+        assert any(e["line"] == "811" for e in entries)
 
     def test_each_line_suggestion_is_on_that_line(
         self, monkeypatch: pytest.MonkeyPatch
@@ -573,7 +583,8 @@ class TestUserJourney:
     def test_a_far_address_is_reported_not_hidden(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Someone in London still gets an answer, clearly marked."""
+        """Someone in London is flagged out-of-area at geocoding and gets no
+        result, not a nonsense 40-hour walk shown as a suggestion."""
         _mock_photon(
             monkeypatch,
             photon_feature(name="Rothschild", city="London", osm_value="house",
@@ -586,4 +597,6 @@ class TestUserJourney:
         body = client.get(
             "/api/nearest", params={"lat": candidate["lat"], "lon": candidate["lon"]}
         ).json()
-        assert body["best_stop"]["lines"], "still names a line, however far"
+        assert body["best_stop"] is None
+        assert body["stops"] == []
+        assert body["lines"] == []

@@ -63,8 +63,42 @@ def app_url(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[str]:
     from app.web import app as fastapi_app
 
     cache = tmp_path / "stops.json"
+    # SAMPLE_LINES covers central Tel Aviv; the Marcel Janco house is in its
+    # north, which the 30-minute walk cutoff would otherwise drain of results.
+    # A stop near the house keeps the happy path a real happy path.
     cache.write_text(
-        json.dumps({"fetched_at": "2026-01-01T00:00:00+00:00", "lines": SAMPLE_LINES})
+        json.dumps({"fetched_at": "2026-01-01T00:00:00+00:00", "lines": SAMPLE_LINES + [
+            {
+                "line": "811",
+                "name": "HaKiriya",
+                "stop_count": 1,
+                "stops": [{
+                    "stop_id": "n1",
+                    "code": "711",
+                    "name": "שדרות אבא אבן",
+                    "name_en": "Abba Hillel Road",
+                    "lat": 32.1147,
+                    "lon": 34.8240,
+                    "index": 5,
+                    "is_park_and_ride": False,
+                }],
+            },
+            {
+                "line": "815",
+                "name": "Kiryat Atidim",
+                "stop_count": 1,
+                "stops": [{
+                    "stop_id": "n2",
+                    "code": "712",
+                    "name": "דרך אבוקה",
+                    "name_en": "Derech Abuka",
+                    "lat": 32.1110,
+                    "lon": 34.8360,
+                    "index": 4,
+                    "is_park_and_ride": False,
+                }],
+            },
+        ]})
     )
     monkeypatch.setattr(config, "STOPS_CACHE", cache)
     monkeypatch.setattr(find, "_pick_router", lambda: None)

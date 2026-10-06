@@ -108,7 +108,9 @@ Two deployment caveats:
    And the chain moves on when a result is not an address at all, rather than
    stopping at the first non-empty response.
 2. `scripts/find.py` asks Valhalla for a **pedestrian** route to all 33 stops
-   concurrently, then ranks by distance.
+   concurrently, then ranks by distance. Stops more than a 30-minute walk away
+   are dropped from every result set, so the closest stop is always genuinely
+   walkable and a far-away street never surfaces a nonsense suggestion.
 3. `app/web.py` serves that over JSON; `static/` is the Leaflet UI.
 
 Walk times are address-to-stop only. Door-to-door time depends on when the
