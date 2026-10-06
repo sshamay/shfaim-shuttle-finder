@@ -115,6 +115,15 @@ function resultRow(
   const tdReturn = document.createElement("td");
   tdReturn.className = "return";
   tdReturn.textContent = returnMin != null ? `${Math.round(returnMin)} min` : "-";
+  // data-label feeds the mobile card layout's little column labels.
+  tdLine.setAttribute("data-label", "Line");
+  tdRoute.setAttribute("data-label", "Route");
+  tdStop.setAttribute("data-label", "Closest stop");
+  tdNo.setAttribute("data-label", "No.");
+  tdCode.setAttribute("data-label", "Code");
+  tdWalk.setAttribute("data-label", "Walk");
+  tdRide.setAttribute("data-label", "Ride");
+  tdReturn.setAttribute("data-label", "Return");
   tr.append(tdLine, tdRoute, tdStop, tdNo, tdCode, tdWalk, tdRide, tdReturn);
   return tr;
 }
