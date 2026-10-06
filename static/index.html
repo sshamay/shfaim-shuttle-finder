@@ -27,8 +27,11 @@
   </section>
 
   <section class="panel" id="result" hidden>
+    <div class="result-top">
+      <button id="collapseBtn" type="button">Hide results &#9660;</button>
+    </div>
     <div class="winner" id="winner"></div>
-    <h2>Other lines</h2>
+    <h2 id="otherLinesTitle">Other lines</h2>
     <table class="lines">
       <thead><tr><th>Line</th><th>Route</th><th>Closest stop</th><th>No.</th><th>Code</th><th>Walk</th><th>Ride</th><th>Return</th></tr></thead>
 
@@ -45,6 +48,7 @@
       </table>
     </details>
   </section>
+  <button id="resultPill" type="button" hidden></button>
 </main>
 
 <div id="map"></div>

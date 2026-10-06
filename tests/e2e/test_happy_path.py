@@ -35,6 +35,12 @@ def test_typing_a_street_address_resolves_straight_to_the_map(page) -> None:
     assert page.locator("#lines tr").count() >= 1
     assert page.locator("#stops tr").count() >= 1
 
+    # The winner (line 811, the Abba Hillel stop) has its own card; "Other
+    # lines" must not repeat it. The 815 suggestion is the remaining row.
+    other_lines = page.locator("#lines .line-no").all_inner_texts()
+    assert "815" in other_lines, f"expected 815 as an alternative, got {other_lines}"
+    assert "811" not in other_lines, f"winner repeated in Other lines: {other_lines}"
+
     # The map was centred on the answer and stop pins were dropped.
     pins = page.locator(".leaflet-marker-pane .pin")
     pins.first.wait_for(timeout=10_000)
@@ -43,3 +49,33 @@ def test_typing_a_street_address_resolves_straight_to_the_map(page) -> None:
     # The box kept the original misspelling: the whole round-trip went through
     # the real /api/search -> auto-select -> /api/nearest -> render path.
     assert page.input_value("#q") == "Marsel yanko 10"
+
+
+def test_results_collapse_to_a_pill_on_mobile(page) -> None:
+    """On a phone the results panel folds up so the map gets the screen back."""
+    page.set_viewport_size({"width": 390, "height": 844})
+
+    q = page.locator("#q")
+    q.fill("Marsel yanko 10")
+    q.press("Enter")
+
+    page.locator("#winner .walk").wait_for(timeout=10_000)
+
+    # "Hide" is a mobile-only control and the panel collapses.
+    page.locator("#collapseBtn").wait_for(state="visible")
+    page.locator("#collapseBtn").click()
+    page.locator("#result").wait_for(state="hidden")
+    page.locator("#resultPill").wait_for(state="visible")
+
+    pill = page.locator("#resultPill")
+    text = pill.text_content()
+    assert "811" in text and "min walk" in text, text
+
+    # The fixed map now owns the full viewport width again.
+    box = page.locator("#map").bounding_box()
+    assert box is not None and box["width"] == 390
+
+    # Tapping the pill brings the full results back.
+    pill.click()
+    page.locator("#result").wait_for(state="visible")
+    page.locator("#resultPill").wait_for(state="hidden")

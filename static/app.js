@@ -14,6 +14,21 @@ const goEl = document.getElementById("go");
 const listEl = document.getElementById("candidates");
 const statusEl = document.getElementById("status");
 const resultEl = document.getElementById("result");
+const resultPillEl = document.getElementById("resultPill");
+
+// On mobile the whole panel can be folded up so the map gets the screen back.
+// The collapsed state is a floating one-line pill that reopens the results.
+document.getElementById("collapseBtn").addEventListener("click", () => {
+  resultEl.hidden = true;
+  resultPillEl.hidden = false;
+  map.invalidateSize();
+});
+resultPillEl.addEventListener("click", () => {
+  resultPillEl.hidden = true;
+  resultEl.hidden = false;
+  resultEl.scrollIntoView({ block: "nearest" });
+  map.invalidateSize();
+});
 
 // Photon's OSM values for "someone lives here", mirroring ADDRESS_TYPES in
 // app/geocode.py. Used to tell a firm address answer apart from a POI that
@@ -137,6 +152,7 @@ function render(data) {
 
   if (!best) {
     resultEl.hidden = true;
+    resultPillEl.hidden = true;
     setStatus("No stops found.", "err");
     return;
   }
@@ -155,6 +171,11 @@ function render(data) {
     </div>`;
   heName(winner.querySelector(".meta"), best.name_he);
   resultEl.hidden = false;
+  // A fresh search always comes back expanded with a current one-liner ready
+  // for the collapse pill.
+  resultPillEl.hidden = true;
+  resultPillEl.innerHTML =
+    `${best.lines[0]} &middot; ${best.name_en} &middot; ${walkLabel(best.walk_min)}`;
 
   if (!data.routing_available) {
     setStatus(
@@ -170,7 +191,11 @@ function render(data) {
   data.lines.forEach((entry) => {
     routeName[entry.line] = entry.name;
   });
+  // The winner card already shows the best stop and every line it serves, so
+  // those lines' rows in "Other lines" would be duplicates. A line whose
+  // closest stop is that same physical stop (same coordinates) is skipped.
   data.lines.forEach((entry) => {
+    if (entry.stop.lat === best.lat && entry.stop.lon === best.lon) return;
     linesTbody.append(
       resultRow(
         entry.line,
@@ -184,13 +209,20 @@ function render(data) {
       )
     );
   });
+  // No alternative lines left when the winner is the only stop in range:
+  // empty tables under a header would just look broken.
+  const otherLinesTitle = document.getElementById("otherLinesTitle");
+  const otherLinesTable = linesTbody.closest("table");
+  const hasOtherLines = linesTbody.children.length > 0;
+  otherLinesTitle.hidden = !hasOtherLines;
+  otherLinesTable.hidden = !hasOtherLines;
 
   const stopsTbody = document.getElementById("stops");
   stopsTbody.innerHTML = "";
   // A nearby stop can serve several lines, and its number differs between them,
   // so it gets one row per line rather than a single row listing them.
-  // The best stop is skipped: it already leads the winner card and the winning
-  // line's row in "Other lines", so repeating it here adds no information.
+  // The best stop is skipped: it already leads the winner card, so repeating
+  // it here adds no information.
   const firstRowForStop = new Map();  // data.stops index -> first <tr> for it
   data.stops.forEach((stop, i) => {
     if (i === 0) return;
