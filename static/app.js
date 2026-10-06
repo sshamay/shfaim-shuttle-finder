@@ -14,20 +14,24 @@ const goEl = document.getElementById("go");
 const listEl = document.getElementById("candidates");
 const statusEl = document.getElementById("status");
 const resultEl = document.getElementById("result");
+const resultControlsEl = document.querySelector(".result-controls");
+const collapseBtnEl = document.getElementById("collapseBtn");
 const resultPillEl = document.getElementById("resultPill");
 
-// On mobile the whole panel can be folded up so the map gets the screen back.
-// The collapsed state is a floating one-line pill that reopens the results.
-document.getElementById("collapseBtn").addEventListener("click", () => {
-  resultEl.hidden = true;
-  resultPillEl.hidden = false;
+// The results panel can be folded up so the map gets the screen back. The
+// toggle lives OUTSIDE the panel (in .result-controls) so it survives the
+// collapse and is always the explicit way back; on phones a floating pill is
+// a second, thumb-friendly restore point.
+function setCollapsed(collapsed) {
+  resultEl.hidden = collapsed;
+  resultPillEl.hidden = !collapsed;
+  collapseBtnEl.innerHTML = collapsed ? "Show results &#9650;" : "Hide results &#9660;";
   map.invalidateSize();
-});
+}
+collapseBtnEl.addEventListener("click", () => setCollapsed(!resultEl.hidden));
 resultPillEl.addEventListener("click", () => {
-  resultPillEl.hidden = true;
-  resultEl.hidden = false;
+  setCollapsed(false);
   resultEl.scrollIntoView({ block: "nearest" });
-  map.invalidateSize();
 });
 
 // Photon's OSM values for "someone lives here", mirroring ADDRESS_TYPES in
@@ -152,6 +156,7 @@ function render(data) {
 
   if (!best) {
     resultEl.hidden = true;
+    resultControlsEl.hidden = true;
     resultPillEl.hidden = true;
     setStatus("No stops found.", "err");
     return;
@@ -172,7 +177,9 @@ function render(data) {
   heName(winner.querySelector(".meta"), best.name_he);
   resultEl.hidden = false;
   // A fresh search always comes back expanded with a current one-liner ready
-  // for the collapse pill.
+  // for the collapse pill and a reset toggle.
+  resultControlsEl.hidden = false;
+  collapseBtnEl.innerHTML = "Hide results &#9660;";
   resultPillEl.hidden = true;
   resultPillEl.innerHTML =
     `${best.lines[0]} &middot; ${best.name_en} &middot; ${walkLabel(best.walk_min)}`;

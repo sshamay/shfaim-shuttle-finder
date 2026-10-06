@@ -75,7 +75,16 @@ input[type="search"]:focus {
   outline-offset: -1px;
 }
 
-.result-top { display: none; }
+.result-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 4px;
+  pointer-events: auto;
+}
+#collapseBtn {
+  padding: 6px 12px;
+  font-size: 13px;
+}
 
 button {
   padding: 10px 18px;
@@ -320,18 +329,10 @@ main {
   header { padding: 14px 16px 6px; }
   header h1 { font-size: 18px; }
 
-  /* Collapse control: hide the whole results panel and keep a floating pill
-     that reopens it. The pill keeps its default display (hidden is toggled by
-     JS, so no display rule may fight the hidden attribute). */
-  .result-top {
-    display: flex;
-    justify-content: flex-end;
-    margin: -4px 0 6px;
-  }
-  #collapseBtn {
-    padding: 6px 12px;
-    font-size: 13px;
-  }
+  /* Floating restore pill for phones: the toggle in .result-controls stays
+     visible at every size, so this is only a secondary, thumb-friendly
+     restore. It keeps its default display (hidden is toggled by JS, so no
+     display rule may fight the hidden attribute). */
   #resultPill {
     position: fixed;
     left: 50%;

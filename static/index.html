@@ -26,10 +26,12 @@
     <div id="status" class="status" hidden></div>
   </section>
 
+  <!-- Lives outside #result so the undo control survives a collapse -->
+  <div class="result-controls" hidden>
+    <button id="collapseBtn" type="button">Hide results &#9660;</button>
+  </div>
+
   <section class="panel" id="result" hidden>
-    <div class="result-top">
-      <button id="collapseBtn" type="button">Hide results &#9660;</button>
-    </div>
     <div class="winner" id="winner"></div>
     <h2 id="otherLinesTitle">Other lines</h2>
     <table class="lines">

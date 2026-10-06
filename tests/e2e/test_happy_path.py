@@ -51,8 +51,12 @@ def test_typing_a_street_address_resolves_straight_to_the_map(page) -> None:
     assert page.input_value("#q") == "Marsel yanko 10"
 
 
-def test_results_collapse_to_a_pill_on_mobile(page) -> None:
-    """On a phone the results panel folds up so the map gets the screen back."""
+def test_results_can_be_hidden_and_restored(page) -> None:
+    """The panel folds up so the map gets the screen back, with a visible undo.
+
+    The toggle lives outside the results panel, so hiding the panel must never
+    hide the way back; the mobile pill is only a second, thumb-friendly path.
+    """
     page.set_viewport_size({"width": 390, "height": 844})
 
     q = page.locator("#q")
@@ -61,21 +65,51 @@ def test_results_collapse_to_a_pill_on_mobile(page) -> None:
 
     page.locator("#winner .walk").wait_for(timeout=10_000)
 
-    # "Hide" is a mobile-only control and the panel collapses.
-    page.locator("#collapseBtn").wait_for(state="visible")
-    page.locator("#collapseBtn").click()
-    page.locator("#result").wait_for(state="hidden")
-    page.locator("#resultPill").wait_for(state="visible")
+    toggle = page.locator("#collapseBtn")
+    toggle.wait_for(state="visible")
+    assert toggle.text_content() == "Hide results ▼"
 
-    pill = page.locator("#resultPill")
-    text = pill.text_content()
-    assert "811" in text and "min walk" in text, text
+    # Collapse: the panel goes away but the toggle must stay and flip label.
+    toggle.click()
+    page.locator("#result").wait_for(state="hidden")
+    assert toggle.text_content() == "Show results ▲"
 
     # The fixed map now owns the full viewport width again.
     box = page.locator("#map").bounding_box()
     assert box is not None and box["width"] == 390
 
-    # Tapping the pill brings the full results back.
+    # Undo via the toggle itself.
+    toggle.click()
+    page.locator("#result").wait_for(state="visible")
+    page.locator("#resultPill").wait_for(state="hidden")
+    assert toggle.text_content() == "Hide results ▼"
+
+    # Collapse again and undo via the floating pill on phones.
+    toggle.click()
+    page.locator("#result").wait_for(state="hidden")
+    page.locator("#resultPill").wait_for(state="visible")
+    pill = page.locator("#resultPill")
+    text = pill.text_content()
+    assert "811" in text and "min walk" in text, text
+
     pill.click()
     page.locator("#result").wait_for(state="visible")
     page.locator("#resultPill").wait_for(state="hidden")
+
+
+def test_collapse_toggle_is_visible_on_desktop(page) -> None:
+    """The hide/results toggle is not a mobile-only control."""
+    q = page.locator("#q")
+    q.fill("Marsel yanko 10")
+    q.press("Enter")
+
+    page.locator("#winner .walk").wait_for(timeout=10_000)
+
+    toggle = page.locator("#collapseBtn")
+    toggle.wait_for(state="visible")
+    toggle.click()
+    page.locator("#result").wait_for(state="hidden")
+    assert toggle.text_content() == "Show results ▲"
+
+    toggle.click()
+    page.locator("#result").wait_for(state="visible")
