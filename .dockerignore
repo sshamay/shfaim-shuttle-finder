@@ -1,0 +1,14 @@
+# Secrets and local state must never reach the image build context.
+.env
+.venv/
+.git/
+.gitignore
+valhalla_data/
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+get_sched813.py
+get_sched813b.py
+render.yaml

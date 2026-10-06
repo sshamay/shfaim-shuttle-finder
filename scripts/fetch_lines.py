@@ -194,17 +194,25 @@ def save(records: list[dict[str, Any]]) -> None:
 
 def main() -> int:
     force = "--force" in sys.argv
+    api_only = "--api-only" in sys.argv
 
     if not force and cache_is_fresh():
         print(f"cache is fresh: {config.STOPS_CACHE}")
         return 0
 
-    try:
-        raw = asyncio.run(scrape_with_playwright())
-        print(f"playwright captured {len(raw['routes'])} routes")
-    except Exception as exc:  # noqa: BLE001
-        print(f"playwright failed ({exc}); falling back to the API")
+    if api_only:
+        # Skipping the browser: cloud builds (Render, Docker) have no Playwright
+        # Chromium, and the direct API is cheaper and just as fresh. Falls over
+        # to the same build/merge/save path below.
         raw = asyncio.run(fetch_via_api())
+        print(f"api captured {len(raw['routes'])} routes")
+    else:
+        try:
+            raw = asyncio.run(scrape_with_playwright())
+            print(f"playwright captured {len(raw['routes'])} routes")
+        except Exception as exc:  # noqa: BLE001
+            print(f"playwright failed ({exc}); falling back to the API")
+            raw = asyncio.run(fetch_via_api())
 
     records = build_line_records(raw["routes"], raw["stops_by_route"])
     if not records:

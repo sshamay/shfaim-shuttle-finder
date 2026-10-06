@@ -39,6 +39,41 @@ Command line, same logic:
 .venv/bin/python scripts/find.py "Azrieli Center Tel Aviv"
 ```
 
+## Deploy
+
+**Render (simplest, free tier).** The repo includes `render.yaml`, a Render
+Blueprint. On Render: *New + → Blueprint → connect this repo*. It installs
+dependencies, fetches fresh stop data with `python scripts/fetch_lines.py
+--api-only` (no browser needed), and serves via `uvicorn` on `$PORT`. The only
+manual step is telling Render the `SERPAPI_API_KEY` (optional).
+
+**Any Docker host (Railway, Fly.io, or a $5 VPS).** The repo includes a hardened
+`Dockerfile` (non-root, no CDN dependency). On boot the entrypoint fetches the
+stops cache from the live API if it is stale (20h TTL), then serves on port
+`8000`:
+
+```bash
+docker build -t shfaim .
+docker run -p 8000:8000 -e SERPAPI_API_KEY=... shfaim
+```
+
+Environment variables (`SERPAPI_API_KEY` lives in `.env` locally, set it in the
+host's env on a server):
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `GEOCODER` | `photon`, `nominatim`, `serpapi`, or `google` | `photon` |
+| `SERPAPI_API_KEY` | 3rd geocoder fallback (POI/search); optional | *unset* |
+| `GOOGLE_MAPS_API_KEY` | optional alternate backend | *unset* |
+
+Two deployment caveats:
+
+- **Walking times.** Without a Valhalla server the site works but shows
+  straight-line estimates marked `~` with a warning banner. Run
+  `scripts/setup_routing.sh` on the host, or accept estimates.
+- **Map tiles** come from OpenStreetMap's public CDN and need no key. Photon
+  geocoding likewise needs nothing; `SERPAPI_API_KEY` only upgrades the fallback.
+
 ## How it works
 
 1. `app/geocode.py` resolves the address to coordinates. Photon first,
