@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shfaim Shuttle Finder</title>
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <h1>Shfaim Shuttle Finder</h1>
+  <p>Find the nearest Shefayim shuttle stop from any address in Tel Aviv.</p>
+</header>
+
+<main>
+  <section class="panel">
+    <label for="q">Address or place</label>
+    <div class="searchrow">
+      <input id="q" type="search" placeholder="e.g. Azrieli Center, Tel Aviv"
+             autocomplete="off" autofocus>
+      <button id="go">Find</button>
+    </div>
+    <p class="hint">Or click anywhere on the map to drop a pin.</p>
+    <ul id="candidates" class="candidates" hidden></ul>
+    <div id="status" class="status" hidden></div>
+  </section>
+
+  <section class="panel" id="result" hidden>
+    <div class="winner" id="winner"></div>
+    <h2>Other lines</h2>
+    <table class="lines">
+      <thead><tr><th>Line</th><th>Route</th><th>Closest stop</th><th>No.</th><th>Code</th><th>Walk</th><th>Ride</th><th>Return</th></tr></thead>
+
+
+      <tbody id="lines"></tbody>
+    </table>
+    <details>
+      <summary>Nearby stops</summary>
+      <table class="lines">
+        <thead><tr><th>Line</th><th>Route</th><th>Closest stop</th><th>No.</th><th>Code</th><th>Walk</th><th>Ride</th><th>Return</th></tr></thead>
+
+
+        <tbody id="stops"></tbody>
+      </table>
+    </details>
+  </section>
+</main>
+
+<div id="map"></div>
+
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

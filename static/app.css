@@ -1,0 +1,312 @@
+:root {
+  --bg: #0f1115;
+  --panel: #181b22;
+  --line: #2a2f3a;
+  --text: #e8eaed;
+  --muted: #9aa2b1;
+  --accent: #73dfb5;
+  --warn: #f0b429;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  padding: 18px 24px 10px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+main {
+  padding: 0 24px 120px;
+  max-width: 760px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.searchrow {
+  display: flex;
+  gap: 8px;
+}
+
+input[type="search"] {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: #0c0e12;
+  color: var(--text);
+  font-size: 15px;
+}
+
+input[type="search"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+button {
+  padding: 10px 18px;
+  border-radius: 7px;
+  border: 0;
+  background: var(--accent);
+  color: #06231a;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.5; cursor: default; }
+
+.hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.status {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  font-size: 14px;
+  background: #0c0e12;
+  border: 1px solid var(--line);
+}
+
+.status.err { border-color: #7f3b3b; color: #ffb4b4; }
+.status.warn { border-color: var(--warn); color: var(--warn); }
+
+.candidates {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.candidates li {
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.candidates li:last-child { border-bottom: 0; }
+.candidates li:hover { background: #20242e; }
+
+/* Out-of-area matches sit in a separate group below the local ones. */
+.candidates li.far {
+  color: var(--muted);
+  border-top: 2px solid var(--line);
+  background: #12141a;
+}
+
+.candidates li.far:hover { background: #1c1f28; }
+
+.winner {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 14px;
+}
+
+.badge {
+  flex-shrink: 0;
+  width: 62px;
+  height: 62px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #06231a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.winner .meta { flex: 1; min-width: 0; }
+.winner .headline { font-size: 18px; font-weight: 600; }
+.winner .walk { font-size: 14px; color: var(--muted); margin-top: 2px; }
+.winner .he {
+  font-size: 13px;
+  color: var(--muted);
+  direction: rtl;
+  unicode-bidi: plaintext;
+}
+
+h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+table.lines {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 14px;
+  font-size: 14px;
+}
+
+table.lines th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+table.lines td {
+  padding: 9px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+table.lines tr:last-child td { border-bottom: 0; }
+table.lines td.walk { white-space: nowrap; text-align: right; }
+
+.line-no {
+  display: inline-block;
+  min-width: 34px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: #20242e;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+  text-align: center;
+}
+
+.est { color: var(--warn); }
+
+.stop-no {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The stop's own code. Kept visually distinct from the position along a line so
+   the two numbers, which look alike but mean different things, are never
+   confused for each other. */
+.stop-code {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px dashed #3d4453;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+td.no, td.code { white-space: nowrap; text-align: center; }
+.winner .walk .stop-no, .winner .walk .stop-code { margin-right: 2px; }
+
+.he {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  direction: rtl;
+  unicode-bidi: plaintext;
+}
+
+details summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+  padding: 6px 0;
+}
+
+.pin {
+  width: 26px;
+  height: 26px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: #3a4152;
+  border: 2px solid var(--text);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.pin.first {
+  background: var(--accent);
+  color: #06231a;
+  border-color: #fff;
+  width: 30px;
+  height: 30px;
+}
+
+.pin > * {
+  transform: rotate(45deg);
+}
+
+/* The map fills the viewport behind the panel. It must stay above the body
+   background or clicks hit <body> instead of the map and picking silently
+   breaks, so it is z-index 0 and the panel is raised above it. */
+#map {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+header,
+main {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Panels themselves take clicks; the gaps between them let them through to
+   the map, so the whole left column is not a click shield. */
+.panel {
+  pointer-events: auto;
+}
+
+#map .leaflet-control-attribution { display: none; }

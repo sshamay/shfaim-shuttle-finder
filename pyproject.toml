@@ -1,0 +1,21 @@
+[project]
+name = "shfaim-shuttle-finder"
+version = "1.0.0"
+description = "Find the walking-nearest Egged Meitar Shefayim shuttle stop from any Tel Aviv address"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+# `app` and `scripts` are imported by path rather than installed, matching how
+# the app itself runs (scripts/ does sys.path manipulation, not packaging).
+pythonpath = ["."]
+testpaths = ["tests"]
+log_cli = true
+log_cli_level = "INFO"
+addopts = "-ra --strict-markers"
+
+markers = [
+    "unit: pure logic, no I/O",
+    "integration: multiple in-process components, still no network",
+    "e2e: drives the FastAPI app end to end via TestClient",
+    "live: hits real Photon/Valhalla/20fl servers, needs RUN_LIVE=1",
+]

@@ -1,0 +1,10 @@
+# Direct deps. Pinned to what this was built and verified against.
+fastapi==0.142.2
+uvicorn==0.54.0
+httpx==0.28.1
+playwright==1.63.0
+
+# Test-only
+pytest==9.1.1
+pytest-mock==3.16.0
+pytest-check==2.9.1
