@@ -43,9 +43,11 @@ Command line, same logic:
 
 **Render (simplest, free tier).** The repo includes `render.yaml`, a Render
 Blueprint. On Render: *New + → Blueprint → connect this repo*. It installs
-dependencies, fetches fresh stop data with `python scripts/fetch_lines.py
---api-only` (no browser needed), and serves via `uvicorn` on `$PORT`. The only
-manual step is telling Render the `SERPAPI_API_KEY` (optional).
+dependencies, *tries* to refresh stop data with `python scripts/fetch_lines.py
+--api-only` (no browser needed; if the 20fl API blocks cloud networks the build
+falls back to the committed snapshot in `data/stops.json`), and serves via
+`uvicorn` on `$PORT`. The only manual step is telling Render the
+`SERPAPI_API_KEY` (optional).
 
 **Any Docker host (Railway, Fly.io, or a $5 VPS).** The repo includes a hardened
 `Dockerfile` (non-root, no CDN dependency). On boot the entrypoint fetches the
@@ -73,6 +75,11 @@ Two deployment caveats:
   `scripts/setup_routing.sh` on the host, or accept estimates.
 - **Map tiles** come from OpenStreetMap's public CDN and need no key. Photon
   geocoding likewise needs nothing; `SERPAPI_API_KEY` only upgrades the fallback.
+- **Data freshness.** `data/stops.json` is committed as a baseline so deploys
+  never fail on network. Each build *tries* the live 20fl API and uses it when
+  reachable; otherwise the committed snapshot serves. To refresh the snapshot
+  locally: `.venv/bin/python scripts/fetch_lines.py --api-only` then push the
+  new `data/stops.json`.
 
 ## How it works
 

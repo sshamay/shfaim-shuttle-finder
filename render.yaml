@@ -6,7 +6,11 @@ services:
     region: oregon
     buildCommand: |
       pip install -r requirements.txt
-      python scripts/fetch_lines.py --api-only
+      if python scripts/fetch_lines.py --api-only; then
+        echo "stops: refreshed from the live API"
+      else
+        echo "WARN: live stops fetch failed (20fl blocks cloud networks); using committed data/stops.json"
+      fi
     startCommand: uvicorn app.web:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /
     envVars:
