@@ -286,7 +286,8 @@ function render(data) {
   }).addTo(map);
 }
 
-function selectCandidate(candidate) {
+function selectCandidate(candidate, { updateBox = false } = {}) {
+  if (updateBox) qEl.value = candidate.label;
   listEl.hidden = true;
   map.setView([candidate.lat, candidate.lon], 17);
   loadNearest(candidate.lat, candidate.lon);
@@ -355,7 +356,7 @@ function showCandidates(candidates) {
     } else {
       li.textContent = c.label;
     }
-    li.addEventListener("click", () => selectCandidate(c));
+    li.addEventListener("click", () => selectCandidate(c, { updateBox: true }));
     listEl.append(li);
   });
   listEl.hidden = false;

@@ -212,7 +212,12 @@ class PhotonGeocoder(Geocoder):
         osm_value = props.get("osm_value") or ""
         name = props.get("name") or props.get("street") or ""
         city = props.get("city") or props.get("county") or props.get("district") or ""
-        parts = [p for p in (name, city, props.get("state"), props.get("country")) if p]
+        # A bare street name hides that the house number was found: street-only
+        # "Katznelson" and "Katznelson 125" are different answers. name also
+        # falls back to street, so the two combine into "Katznelson 125".
+        housenumber = props.get("housenumber") or ""
+        heading = f"{name} {housenumber}".strip() if name and housenumber else name
+        parts = [p for p in (heading, city, props.get("state"), props.get("country")) if p]
         return {
             "label": ", ".join(dict.fromkeys(parts)) or props.get("name", "unknown"),
             "street": props.get("street") or "",
@@ -633,8 +638,16 @@ def _rerank(
     ordered = in_area + far if in_area else [item for _, _, _, item in kept]
 
     out = []
+    # Photon reports the building and each addressable POI inside it as
+    # separate nodes, so "Katznelson 125" can arrive twice with identical
+    # labels a few metres apart. One row is the answer; two look like noise.
+    seen_labels: set[str] = set()
     for item in ordered[:limit]:
         item.pop("_rank", None)
+        label = item.get("label") or ""
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
         out.append(item)
 
     if not out:
