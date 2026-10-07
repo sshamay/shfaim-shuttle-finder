@@ -20,6 +20,7 @@ import http.server
 import json
 import threading
 import time
+import urllib.parse
 from typing import Any, Callable, Iterator
 
 import pytest
@@ -211,14 +212,15 @@ def app_url_ors(
 
 
 def _fake_router_server(
-    *, endpoint: str, payload: Callable[[], dict[str, Any]]
+    *, endpoint: str, payload: Callable[[str], dict[str, Any]]
 ) -> Iterator[str]:
     """A local stand-in for a routing backend answering with ``payload``.
 
     Valhalla is probed on GET /status and routes on POST /route; ORS is only
     ever GET, probe and route alike. ``endpoint`` is the suffix the fixture
     yields (``/route`` for Valhalla, "" for ORS) so the probe URL derivation
-    matches the real backends' URL shapes.
+    matches the real backends' URL shapes. ``payload`` receives the request
+    line (GET) or body (POST) so answer geometry can follow the query.
     """
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -230,13 +232,12 @@ def _fake_router_server(
             self.wfile.write(body)
 
         def do_GET(self) -> None:
-            self._respond(json.dumps(payload()).encode())
+            self._respond(json.dumps(payload(self.path)).encode())
 
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length") or 0)
-            if length:
-                self.rfile.read(length)
-            self._respond(json.dumps(payload()).encode())
+            body = self.rfile.read(length).decode() if length else ""
+            self._respond(json.dumps(payload(body)).encode())
 
         def log_message(self, *args: object) -> None:
             pass
@@ -251,16 +252,38 @@ def _fake_router_server(
         thread.join(timeout=5)
 
 
+def _ors_walk_between(request: str) -> dict[str, Any]:
+    """An ORS look-alike whose path spans the requested start and end.
+
+    A fixed geometry would sit outside the viewport the app fitBounds to,
+    and Leaflet would correctly clip it to nothing - the map draws the walk
+    between the origin and the stop, so the fake's walk must go there too.
+    The probe's own start/end pair parses the same way, harmlessly.
+    """
+    params = urllib.parse.parse_qs(urllib.parse.urlparse(request).query)
+    start = [float(v) for v in params["start"][0].split(",")]
+    end = [float(v) for v in params["end"][0].split(",")]
+    mid = [
+        (start[0] + end[0]) / 2 + 0.0004,
+        (start[1] + end[1]) / 2 - 0.0003,
+    ]
+    payload = ors_response(492.0)
+    payload["features"][0]["geometry"]["coordinates"] = [start, mid, end]
+    return payload
+
+
 @pytest.fixture
 def local_valhalla() -> Iterator[str]:
     """A Valhalla-shaped fake serving a 556 m walk (~7 min) for every stop."""
-    yield from _fake_router_server(endpoint="/route", payload=lambda: valhalla_response(0.556))
+    yield from _fake_router_server(
+        endpoint="/route", payload=lambda _request: valhalla_response(0.556)
+    )
 
 
 @pytest.fixture
 def local_ors() -> Iterator[str]:
     """An ORS-shaped fake serving a 492 m walk (~6 min) for every destination."""
-    yield from _fake_router_server(endpoint="", payload=lambda: ors_response(492.0))
+    yield from _fake_router_server(endpoint="", payload=_ors_walk_between)
 
 
 def _page_for(base_url: str) -> Iterator:

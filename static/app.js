@@ -8,6 +8,23 @@ L.control.zoom({ position: "bottomright" }).addTo(map);
 const markerLayer = L.layerGroup().addTo(map);
 let originMarker = null;
 let stopMarkers = [];
+let walkLine = null;
+
+// The routed walk from the origin to a stop, drawn only when the backend
+// returned real path geometry (OpenRouteService). Estimates and local
+// Valhalla send none, so those searches simply show no line. Geometry comes
+// as GeoJSON [lon, lat] pairs; Leaflet wants [lat, lon].
+function drawWalkLine(geometry) {
+  if (walkLine) {
+    walkLine.remove();
+    walkLine = null;
+  }
+  if (!geometry || geometry.length < 2) return;
+  walkLine = L.polyline(
+    geometry.map(([lon, lat]) => [lat, lon]),
+    { color: "#4a8cff", weight: 5, opacity: 0.85, className: "walk-route" }
+  ).addTo(map);
+}
 
 const qEl = document.getElementById("q");
 const goEl = document.getElementById("go");
@@ -155,6 +172,7 @@ function render(data) {
   listEl.hidden = true;
 
   if (!best) {
+    drawWalkLine(null);
     resultEl.hidden = true;
     resultControlsEl.hidden = true;
     resultPillEl.hidden = true;
@@ -262,14 +280,17 @@ function render(data) {
       }${stop.code != null && stop.code !== "" ? ` · code ${stop.code}` : ""}`,
     });
     m.on("click", () => {
-      // The best stop has no row in "Nearby stops" anymore, so its pin points
-      // at the winner card; the rest scroll to their row in that table.
+      // A pin click focuses that stop's walk on the map, then points at its
+      // row (or the winner card when it is the best stop).
+      drawWalkLine(stop.geometry);
       const target = firstRowForStop.get(i) || document.getElementById("winner");
       target?.scrollIntoView({ block: "nearest" });
     });
     m.addTo(markerLayer);
     stopMarkers.push(m);
   });
+
+  drawWalkLine(best.geometry);
 
   const bounds = L.latLngBounds([
     [data.origin.lat, data.origin.lon],

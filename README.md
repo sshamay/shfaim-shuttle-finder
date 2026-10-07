@@ -128,7 +128,12 @@ walk an estimate. Set its key as `OPENROUTESERVICE_API_KEY` in Render's
 dashboard; `render.yaml` keeps it out of sync so the value stays secret. The
 old OSRM public demo was dropped because it ignores the `foot` profile and
 answers every query with driving distances — when picking a backend, check
-that walking actually changes the answer.
+that walking actually changes the answer. Every request to a Valhalla host
+carries `User-Agent` and `X-Client-Id: shfaim-shuttle-finder`, as the FOSSGIS
+public-demo README asks. When OpenRouteService answers, its GeoJSON path rides
+along to the browser, which draws the walk to the winning stop on the map;
+estimates and Valhalla return no drawable path, so those searches show no
+line.
 
 **If every router is down, results degrade quietly.** The app falls back to
 straight-line estimates, marked `~`, with a banner. Those are optimistically

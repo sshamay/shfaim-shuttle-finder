@@ -31,6 +31,9 @@ def test_no_router_shows_the_estimate_banner(page) -> None:
     message = status.text_content()
     assert "Routing server is not running" in message, message
 
+    # An estimate has no path geometry, so the map must draw no walk line.
+    assert page.locator("path.walk-route").count() == 0
+
 
 def test_a_reachable_valhalla_yields_exact_walk_times(page_valhalla) -> None:
     """A live probe finds the Valhalla look-alike and still hides the banner."""
@@ -39,6 +42,9 @@ def test_a_reachable_valhalla_yields_exact_walk_times(page_valhalla) -> None:
     assert "~" not in text, f"routed distances must not carry the marker: {text!r}"
 
     page_valhalla.locator("#status").wait_for(state="hidden")
+    # Valhalla reports its path as an encoded polyline, which the app does not
+    # decode yet - exact times, but still no drawn line.
+    assert page_valhalla.locator("path.walk-route").count() == 0
 
 
 def test_ors_takes_over_when_valhalla_is_unreachable(page_ors) -> None:
@@ -46,10 +52,13 @@ def test_ors_takes_over_when_valhalla_is_unreachable(page_ors) -> None:
 
     VALHALLA_URLS points at a refused port; the ORS directions look-alike is
     what the responses come from, so this exercises probe selection, the ORS
-    GET wire format, and the ORS response parse end to end.
+    GET wire format, the ORS response parse, and the walk line the GeoJSON
+    geometry draws on the map, end to end.
     """
     text = _search_and_walk(page_ors)
     assert "min walk" in text
     assert "~" not in text, f"ors-routed distances must not carry the marker: {text!r}"
 
     page_ors.locator("#status").wait_for(state="hidden")
+    page_ors.locator("path.walk-route").wait_for(timeout=5_000)
+    assert page_ors.locator("path.walk-route").count() == 1

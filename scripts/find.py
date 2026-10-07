@@ -346,11 +346,13 @@ async def _ors_walk_m(
     client: httpx.AsyncClient,
     origin: tuple[float, float],
     stop: dict[str, Any],
-) -> float:
-    """Pedestrian metres from an OpenRouteService directions request.
+) -> tuple[float, list[list[float]] | None]:
+    """Pedestrian metres plus path geometry from an OpenRouteService request.
 
-    The documented simple GET answers GeoJSON, with the metre count under
-    features[0].properties.summary.distance.
+    The documented simple GET answers GeoJSON: the metre count sits under
+    features[0].properties.summary.distance and the drawn path under
+    features[0].geometry.coordinates as [lon, lat] pairs. The geometry is
+    rounded to 5 decimals (~1 m) - finer precision is noise on the wire.
     """
     lon1, lat1 = origin[1], origin[0]
     lon2, lat2 = stop["lon"], stop["lat"]
@@ -365,7 +367,13 @@ async def _ors_walk_m(
     meters = features[0]["properties"]["summary"]["distance"]
     if not meters:
         raise ValueError("ors returned a zero-length route")
-    return float(meters)
+    coords = (features[0].get("geometry") or {}).get("coordinates") or None
+    geometry = (
+        [[round(float(lon), 5), round(float(lat), 5)] for lon, lat in coords]
+        if coords
+        else None
+    )
+    return float(meters), geometry
 
 
 async def walking_distances(
@@ -386,6 +394,9 @@ async def walking_distances(
             "stop": stop,
             "walk_m": straight * ESTIMATE_DETOUR_FACTOR,
             "is_estimate": True,
+            # Only ORS returns a drawable path; estimates and Valhalla have
+            # none, and the map simply draws no line for those stops.
+            "geometry": None,
         }
 
         # With no router at all, go straight to the estimate. Probing dead
@@ -395,12 +406,18 @@ async def walking_distances(
 
         async with semaphore:
             try:
+                geometry: list[list[float]] | None = None
                 if _is_ors(router):
-                    meters = await _ors_walk_m(client, origin, stop)
+                    meters, geometry = await _ors_walk_m(client, origin, stop)
                 else:
                     meters = await _valhalla_walk_m(client, router, origin, stop)
                 if meters > 0:
-                    return {"stop": stop, "walk_m": meters, "is_estimate": False}
+                    return {
+                        "stop": stop,
+                        "walk_m": meters,
+                        "is_estimate": False,
+                        "geometry": geometry,
+                    }
             except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError):
                 pass
             return fallback
@@ -423,6 +440,7 @@ def find_nearest(lat: float, lon: float, top: int = 5) -> dict[str, Any]:
         stop["walk_m"] = round(item["walk_m"])
         stop["walk_min"] = round(minutes)
         stop["is_estimate"] = item["is_estimate"]
+        stop["geometry"] = item.get("geometry")
         ranked.append(stop)
 
     ranked.sort(key=lambda s: s["walk_m"])

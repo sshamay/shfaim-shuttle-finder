@@ -365,7 +365,9 @@ def ors_response(distance_m: float) -> dict[str, Any]:
     """A minimal OpenRouteService directions payload (GeoJSON, metres).
 
     The documented simple GET answers GeoJSON, so the metre count lives under
-    features[0].properties.summary.distance.
+    features[0].properties.summary.distance and the drawable walk path under
+    features[0].geometry.coordinates, as [lon, lat] pairs - which is what the
+    map draws when these fixtures stand in for the real API.
     """
     return {
         "type": "FeatureCollection",
@@ -373,7 +375,14 @@ def ors_response(distance_m: float) -> dict[str, Any]:
             {
                 "type": "Feature",
                 "properties": {"summary": {"distance": distance_m, "duration": 0.0}},
-                "geometry": {"type": "LineString", "coordinates": []},
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [
+                        [34.7920, 32.0747],
+                        [34.7935, 32.0760],
+                        [34.7952, 32.0775],
+                    ],
+                },
             }
         ],
         "bbox": [],

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from app import config, geocode
 from app.web import app
 from scripts import find
-from tests.conftest import photon_feature, photon_response, valhalla_response
+from tests.conftest import ors_response, photon_feature, photon_response, valhalla_response
 
 
 @pytest.fixture
@@ -75,6 +75,36 @@ def _mock_router(monkeypatch: pytest.MonkeyPatch, length_km: float = 0.402) -> N
             return None
 
         async def post(self, *a, **k):
+            return _Resp()
+
+    monkeypatch.setattr(find.httpx, "AsyncClient", _Client)
+
+
+def _mock_ors(monkeypatch: pytest.MonkeyPatch, distance_m: float = 402.0) -> None:
+    """Back the app with an ORS-shaped GET, the only backend that draws walks."""
+    monkeypatch.setattr(find, "_pick_router", lambda: find.config.OPENROUTESERVICE_URL)
+    monkeypatch.setattr(config, "ors_api_key", lambda: "test-key")
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return ors_response(distance_m)
+
+    class _Client:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return None
+
+        async def get(self, *a, **k):
             return _Resp()
 
     monkeypatch.setattr(find.httpx, "AsyncClient", _Client)
@@ -221,6 +251,37 @@ class TestNearestEndpoint:
         monkeypatch.setattr(find, "_pick_router", lambda: None)
         body = client.get("/api/nearest", params={"lat": 32.0747, "lon": 34.7920}).json()
         assert all(stop["is_estimate"] for stop in body["stops"])
+
+    def test_ors_stops_carry_walk_geometry_for_the_map(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The map draws the winner's walk; it reads best_stop.geometry."""
+        _mock_ors(monkeypatch)
+        body = client.get("/api/nearest", params={"lat": 32.0747, "lon": 34.7920}).json()
+        geometry = body["best_stop"]["geometry"]
+        assert geometry and len(geometry) >= 2, "a drawable path is needed"
+        for lon, lat in geometry:
+            assert isinstance(lon, float) and isinstance(lat, float)
+        for stop in body["stops"]:
+            assert stop["geometry"] == geometry, "every stop draws its own walk"
+
+    def test_line_rows_omit_geometry_to_keep_the_payload_small(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Line rows are text-only; the path rides on the stop payloads once."""
+        _mock_ors(monkeypatch)
+        body = client.get("/api/nearest", params={"lat": 32.0747, "lon": 34.7920}).json()
+        for entry in body["lines"]:
+            assert entry["stop"]["geometry"] is None
+
+    def test_non_ors_results_carry_no_geometry(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Valhalla returns an encoded polyline we do not decode: no line drawn."""
+        _mock_router(monkeypatch)
+        body = client.get("/api/nearest", params={"lat": 32.0747, "lon": 34.7920}).json()
+        assert all(stop["geometry"] is None for stop in body["stops"])
+        assert body["best_stop"]["geometry"] is None
 
     def test_line_entries_include_route_name(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch

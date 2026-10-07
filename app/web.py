@@ -21,7 +21,9 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app = FastAPI(title="Shfaim Shuttle Finder")
 
 
-def _stop_payload(stop: dict[str, Any]) -> dict[str, Any]:
+def _stop_payload(
+    stop: dict[str, Any], *, include_geometry: bool = True
+) -> dict[str, Any]:
     """Trim a stop for the wire and keep the Hebrew name for the tooltip."""
     numbers = stop.get("stop_numbers") or {}
     return {
@@ -45,6 +47,11 @@ def _stop_payload(stop: dict[str, Any]) -> dict[str, Any]:
         "return_min": stop.get("return_min"),
         "is_estimate": stop.get("is_estimate", False),
         "is_park_and_ride": stop.get("is_park_and_ride", False),
+        # The routed walk path as [lon, lat] pairs, only when the backend
+        # returned one (ORS); estimates and Valhalla send null and the map
+        # draws no line. The winner and nearby-stop payloads carry it; the
+        # per-line copies do not need it, so the wire does not repeat it.
+        "geometry": stop.get("geometry") if include_geometry else None,
     }
 
 
@@ -99,7 +106,9 @@ async def api_nearest(lat: float, lon: float) -> dict[str, Any]:
                 # This line's own number for its closest stop, which can differ
                 # from the same stop's number on another line.
                 "stop_no": e["stop_no"],
-                "stop": _stop_payload(e["best_stop"]),
+                # Line rows only display text; the drawn walk comes from the
+                # best_stop/stops payloads above, so this copy omits it.
+                "stop": _stop_payload(e["best_stop"], include_geometry=False),
             }
             for e in result["lines"]
         ],

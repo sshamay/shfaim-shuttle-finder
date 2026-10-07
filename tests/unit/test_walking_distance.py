@@ -105,6 +105,15 @@ class TestWalkingDistancesRouterDown:
     def test_detour_factor_is_above_one(self) -> None:
         assert find.ESTIMATE_DETOUR_FACTOR > 1.0
 
+    def test_estimates_carry_no_geometry(
+        self, stops_cache: Path, no_router: None
+    ) -> None:
+        """A straight-line number has no path to draw; the map shows no line."""
+        results = find.asyncio.run(
+            find.walking_distances((32.0747, 34.7920), find.load_stops())
+        )
+        assert all(r["geometry"] is None for r in results)
+
 
 class TestWalkingDistancesRouted:
     def test_uses_router_distance_when_available(
@@ -208,6 +217,21 @@ class TestWalkingDistancesRouted:
         assert all(h["X-Client-Id"] == "shfaim-shuttle-finder" for h in sent)
         assert all(h["User-Agent"] == config.USER_AGENT for h in sent)
 
+    def test_valhalla_results_carry_no_geometry(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """Only ORS returns a drawable path; the map draws no line otherwise."""
+        mocker.patch.object(find, "_pick_router", lambda: "http://router/route")
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeClient(lambda r: _FakeResponse(valhalla_response(0.4))),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert all(r["geometry"] is None for r in results)
+
 
 class TestWalkingDistancesOrs:
     """The OpenRouteService backend, once _pick_router has chosen it."""
@@ -296,6 +320,43 @@ class TestWalkingDistancesOrs:
         )
         assert all(r["is_estimate"] for r in results)
 
+    def test_ors_results_carry_drawable_walk_geometry(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """The GeoJSON path is what the map draws; it must reach the results."""
+        self._patch_ors(mocker)
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(
+                lambda r: _FakeGetResponse(ors_response(492.0))
+            ),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        expected = [[34.792, 32.0747], [34.7935, 32.076], [34.7952, 32.0775]]
+        assert all(r["geometry"] == expected for r in results)
+
+    def test_geometry_coordinates_are_rounded_to_five_decimals(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """ORS answers full float precision; ~1 m is all the map needs."""
+        self._patch_ors(mocker)
+        payload = ors_response(400.0)
+        payload["features"][0]["geometry"]["coordinates"] = [
+            [34.7912345678, 32.0747123456]
+        ]
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(lambda r: _FakeGetResponse(payload)),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert all(r["geometry"] == [[34.79123, 32.07471]] for r in results)
+
 
 class TestFindNearest:
     def test_ranks_closest_stop_first(self, stops_cache: Path, mocker) -> None:
@@ -309,6 +370,26 @@ class TestFindNearest:
         mocker.patch.object(find, "_pick_router", lambda: None)
         result = find.find_nearest(32.0747, 34.7920)
         assert result["best_stop"]["walk_m"] == result["stops"][0]["walk_m"]
+
+    def test_stops_carry_geometry_when_ors_routed(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """The ranking must not drop the walk path the map draws from."""
+        mocker.patch.object(
+            find, "_pick_router", lambda: find.config.OPENROUTESERVICE_URL
+        )
+        mocker.patch.object(find.config, "ors_api_key", lambda: "test-key")
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(
+                lambda r: _FakeGetResponse(ors_response(492.0))
+            ),
+        )
+        result = find.find_nearest(32.0747, 34.7920)
+        for stop in result["stops"]:
+            assert stop["geometry"], "every ranked stop keeps its walk path"
+        assert result["best_stop"]["geometry"] == result["stops"][0]["geometry"]
 
     def test_reports_one_entry_per_line(self, stops_cache: Path, mocker) -> None:
         mocker.patch.object(find, "_pick_router", lambda: None)
