@@ -73,12 +73,12 @@ Two deployment caveats:
 
 - **Walking times.** Without a reachable Valhalla server the site works but
   shows straight-line estimates marked `~` with a warning banner. The app
-  probes its routers with a 10s timeout: a local container first
-  (`scripts/setup_routing.sh`), then two public `openstreetmap.de` demos.
-  Those demos are reliable from nearby networks but can time out from US
-  cloud regions; if the banner shows on a hosted deploy, run the container on
-  a VPS and set `VALHALLA_URL=http://YOUR_VPS:8002/route` — it is probed
-  first, so exact walk times return.
+  probes its routers with a real, tiny walk request (10s timeout): a local
+  container first (`scripts/setup_routing.sh`), then two public
+  `openstreetmap.de` demos. Those demos are reliable from nearby networks but
+  can time out from US cloud regions; if the banner shows on a hosted deploy,
+  run the container on a VPS and set `VALHALLA_URL=http://YOUR_VPS:8002/route`
+  — it is probed first, so exact walk times return.
 - **Map tiles** come from OpenStreetMap's public CDN and need no key. Photon
   geocoding likewise needs nothing; `SERPAPI_API_KEY` only upgrades the fallback.
 - **Data freshness.** `data/stops.json` is committed as a baseline so deploys

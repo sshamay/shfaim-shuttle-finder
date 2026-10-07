@@ -115,11 +115,6 @@ ROUTER_OK_TTL_S = 300.0
 ROUTER_FAIL_TTL_S = 20.0
 
 
-def _probe_url(base: str) -> str:
-    """The cheap health endpoint Valhalla keeps beside its /route handler."""
-    return base.rsplit("/", 1)[0] + "/status"
-
-
 def _valhalla_headers() -> dict[str, str]:
     """Identify this client to the FOSSGIS public demo, as its README asks.
 
@@ -130,22 +125,21 @@ def _valhalla_headers() -> dict[str, str]:
     return {"User-Agent": config.USER_AGENT, "X-Client-Id": config.CLIENT_ID}
 
 
-def _status_answers(url: str) -> bool:
-    """Does a probe endpoint answer 200 within the probe timeout?"""
-    try:
-        httpx.get(
-            url,
-            timeout=config.VALHALLA_PROBE_TIMEOUT_S,
-            headers=_valhalla_headers(),
-        ).raise_for_status()
-        return True
-    except Exception:  # noqa: BLE001,S110
-        return False
+# Both backends are probed with a real, minimal directions request over this
+# short walk in central Tel Aviv - cheap in both time and quota. A status
+# endpoint alone proves nothing for Valhalla: valhalla1 answers GET /status
+# from Oregon while POST /route is refused, and picking it on that answer
+# alone pins every stop to straight-line estimates for the whole cache TTL.
+_PROBE_WALK = (34.7880, 32.0710, 34.7890, 32.0720)  # lon1, lat1, lon2, lat2
 
 
-# ORS has no /status, so a minimal directions call is its probe. The pair is a
-# short walk in central Tel Aviv, cheap in both time and quota.
-_ORS_PROBE = (34.7880, 32.0710, 34.7890, 32.0720)  # lon1, lat1, lon2, lat2
+def _valhalla_probe_payload() -> dict[str, Any]:
+    """The tiniest payload that makes Valhalla do real routing work."""
+    lon1, lat1, lon2, lat2 = _PROBE_WALK
+    return {
+        "locations": [{"lat": lat1, "lon": lon1}, {"lat": lat2, "lon": lon2}],
+        "costing": "pedestrian",
+    }
 
 
 def _ors_directions_url(
@@ -162,7 +156,7 @@ def _ors_directions_url(
 
 def _ors_answers(base: str) -> bool:
     """Probe OpenRouteService with a directions call, which also validates the key."""
-    lon1, lat1, lon2, lat2 = _ORS_PROBE
+    lon1, lat1, lon2, lat2 = _PROBE_WALK
     try:
         httpx.get(
             _ors_directions_url(base, lon1, lat1, lon2, lat2),
@@ -179,16 +173,37 @@ def _probe_outcome(
     route_url: str,
     probe_url: str,
     headers: dict[str, str] | None = None,
+    post_json: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """One live probe with its latency and failure reason, for diagnostics."""
+    """One live probe with its latency and failure reason.
+
+    ``_pick_router`` and the ``/api/routing-status`` diagnostic both call
+    this, so the reported verdict and the router actually used can never
+    drift apart. With ``post_json`` the probe is a real route POST -
+    Valhalla's answer to that, not its status page, is what being pickable
+    means.
+    """
     started = time.monotonic()
     try:
         kwargs: dict[str, Any] = {"timeout": config.VALHALLA_PROBE_TIMEOUT_S}
         if headers:
             kwargs["headers"] = headers
-        response = httpx.get(probe_url, **kwargs)
+        if post_json is not None:
+            response = httpx.post(probe_url, json=post_json, **kwargs)
+        else:
+            response = httpx.get(probe_url, **kwargs)
         latency_ms = round((time.monotonic() - started) * 1000)
         ok = 200 <= response.status_code < 300
+        if ok and post_json is not None:
+            # A 200 must carry a route: an interposed portal or proxy page
+            # would otherwise count as healthy, win the pick, and then fail
+            # every real routing call for the whole cache TTL.
+            try:
+                body = response.json()
+            except Exception:  # noqa: BLE001
+                ok = False
+            else:
+                ok = isinstance(body, dict) and "trip" in body
         return {
             "kind": kind,
             "route_url": route_url,
@@ -224,10 +239,16 @@ def routing_status() -> dict[str, Any]:
     """
     key = config.ors_api_key()
     candidates = [
-        _probe_outcome("valhalla", base, _probe_url(base), headers=_valhalla_headers())
+        _probe_outcome(
+            "valhalla",
+            base,
+            base,
+            headers=_valhalla_headers(),
+            post_json=_valhalla_probe_payload(),
+        )
         for base in config.VALHALLA_URLS
     ]
-    lon1, lat1, lon2, lat2 = _ORS_PROBE
+    lon1, lat1, lon2, lat2 = _PROBE_WALK
     ors_probe = _ors_directions_url(
         config.OPENROUTESERVICE_URL, lon1, lat1, lon2, lat2
     )
@@ -275,9 +296,11 @@ def _pick_router() -> str | None:
     """First routing backend that answers, cached with a TTL.
 
     Candidates run in order: each Valhalla host in ``config.VALHALLA_URLS``
-    (probed on its ``/status`` endpoint), then OpenRouteService when an
-    ``OPENROUTESERVICE_API_KEY`` is configured (probed with a minimal
-    directions request). The first that answers is used for the whole request.
+    (probed with a tiny real ``POST /route`` - its ``/status`` answers while
+    routes are refused, which would pin every stop to estimates), then
+    OpenRouteService when an ``OPENROUTESERVICE_API_KEY`` is configured
+    (probed with a minimal directions request). The first that answers is
+    used for the whole request.
 
     Probing costs a few seconds and was previously repeated for every stop,
     which turned a routing outage into a multi-minute request. Caching the
@@ -293,7 +316,14 @@ def _pick_router() -> str | None:
 
     found: str | None = None
     for base in config.VALHALLA_URLS:
-        if _status_answers(_probe_url(base)):
+        outcome = _probe_outcome(
+            "valhalla",
+            base,
+            base,
+            headers=_valhalla_headers(),
+            post_json=_valhalla_probe_payload(),
+        )
+        if outcome["ok"]:
             found = base
             break
     if found is None and config.ors_api_key():

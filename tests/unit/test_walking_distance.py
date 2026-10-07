@@ -763,46 +763,66 @@ class TestRouterPick:
         """Localhost first: the container is authoritative and free."""
         seen: list[str] = []
 
-        def get(url, **kwargs):
+        def post(url, json=None, **kwargs):
             seen.append(url)
             if "localhost" in url:
                 return _FakeSyncResponse(200)
             return _FakeSyncResponse(503)
 
-        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.httpx, "post", post)
         assert find._pick_router() == "http://localhost:8002/route"
-        assert seen[0].endswith("/status")
+        assert seen[0] == "http://localhost:8002/route", "probe the route itself"
 
     def test_falls_through_to_public_host(self, mocker) -> None:
-        def get(url, **kwargs):
+        def post(url, json=None, **kwargs):
             if "localhost" in url:
                 return _FakeSyncResponse(503)
             if "valhalla1.openstreetmap.de" in url:
                 return _FakeSyncResponse(200)
             return _FakeSyncResponse(503)
 
-        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.httpx, "post", post)
         assert find._pick_router() == "https://valhalla1.openstreetmap.de/route"
 
     def test_returns_none_when_all_hosts_fail(self, mocker) -> None:
-        mocker.patch.object(find.httpx, "get", lambda url, **kwargs: _FakeSyncResponse(503))
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(503),
+        )
         assert find._pick_router() is None
 
     def test_returns_none_when_all_hosts_raise(self, mocker) -> None:
         def boom(url, **kwargs):
             raise find.httpx.ConnectError("refused")
 
-        mocker.patch.object(find.httpx, "get", boom)
+        mocker.patch.object(find.httpx, "post", boom)
+        assert find._pick_router() is None
+
+    def test_a_200_without_a_route_counts_as_down(self, mocker) -> None:
+        """A proxy or portal page answering 200 must not win the pick.
+
+        Picking a host that cannot really route pins every stop to
+        straight-line estimates for the whole cache TTL - the exact bug the
+        real-route probe exists to prevent.
+        """
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(
+                200, json_body={"html": "captive portal"}
+            ),
+        )
         assert find._pick_router() is None
 
     def test_success_is_cached_to_avoid_reprobing(self, mocker) -> None:
         calls = {"n": 0}
 
-        def get(url, **kwargs):
+        def post(url, json=None, **kwargs):
             calls["n"] += 1
             return _FakeSyncResponse(200)
 
-        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.httpx, "post", post)
         find._pick_router()
         find._pick_router()
         find._pick_router()
@@ -811,21 +831,25 @@ class TestRouterPick:
     def test_probes_identify_the_client(self, mocker) -> None:
         """FOSSGIS asks public-demo clients for an X-Client-Id header.
 
-        Every probe to a Valhalla host must carry it (plus a real User-Agent
-        instead of httpx's default), or a published app rides unidentified.
+        Every request to a Valhalla host must carry it (plus a real
+        User-Agent instead of httpx's default), or a published app rides
+        unidentified - probes included, since the probe is a real route.
         """
         seen: list[dict] = []
 
-        def get(url, **kwargs):
-            seen.append(kwargs)
+        def post(url, json=None, **kwargs):
+            seen.append({**kwargs, "json": json})
             return _FakeSyncResponse(200)
 
-        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.httpx, "post", post)
         find._pick_router()
 
         headers = seen[0]["headers"]
         assert headers["X-Client-Id"] == "shfaim-shuttle-finder"
         assert headers["User-Agent"] == config.USER_AGENT
+        # The probe itself is a real pedestrian route, not a status ping.
+        assert seen[0]["json"]["costing"] == "pedestrian"
+        assert len(seen[0]["json"]["locations"]) == 2
 
 
 class TestRouterPickOrs:
@@ -833,12 +857,16 @@ class TestRouterPickOrs:
 
     def _patch_ors(self, mocker, key: str) -> None:
         mocker.patch.object(find.config, "ors_api_key", lambda: key)
+        # The Valhalla POST probes fail; ORS answers its GET probe.
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(503),
+        )
         mocker.patch.object(
             find.httpx,
             "get",
-            lambda url, timeout=None, **kwargs: _FakeSyncResponse(
-                200 if "/status" not in url else 503
-            ),
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(200),
         )
 
     def test_ors_is_used_when_all_valhalla_hosts_fail(self, mocker) -> None:
@@ -846,6 +874,11 @@ class TestRouterPickOrs:
         assert find._pick_router() == find.config.OPENROUTESERVICE_URL
 
     def test_ors_is_not_touched_without_a_key(self, mocker) -> None:
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(503),
+        )
         mocker.patch.object(
             find.httpx,
             "get",
@@ -856,11 +889,15 @@ class TestRouterPickOrs:
     def test_ors_probe_sends_the_api_key(self, mocker) -> None:
         sent: dict = {}
 
-        def get(url, timeout=None, **kwargs):
-            if "/status" not in url:
-                sent.update(kwargs)
-            return _FakeSyncResponse(200 if "/status" not in url else 503)
+        def get(url, **kwargs):
+            sent.update(kwargs)
+            return _FakeSyncResponse(200)
 
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(503),
+        )
         mocker.patch.object(find.httpx, "get", get)
         mocker.patch.object(find.config, "ors_api_key", lambda: "sekrit")
         assert find._pick_router() == find.config.OPENROUTESERVICE_URL
@@ -869,11 +906,15 @@ class TestRouterPickOrs:
     def test_ors_probe_uses_the_documented_start_end_form(self, mocker) -> None:
         sent_url: dict = {}
 
-        def get(url, timeout=None, **kwargs):
-            if "/status" not in url:
-                sent_url["url"] = url
-            return _FakeSyncResponse(200 if "/status" not in url else 503)
+        def get(url, **kwargs):
+            sent_url["url"] = url
+            return _FakeSyncResponse(200)
 
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(503),
+        )
         mocker.patch.object(find.httpx, "get", get)
         mocker.patch.object(find.config, "ors_api_key", lambda: "sekrit")
         find._pick_router()
@@ -890,10 +931,10 @@ class TestRouterCacheExpiry:
         """A container that comes back must be noticed without a server restart."""
         healthy = {"v": False}
 
-        def get(url, **kwargs):
+        def post(url, json=None, **kwargs):
             return _FakeSyncResponse(200 if healthy["v"] else 503)
 
-        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.httpx, "post", post)
 
         assert find._pick_router() is None, "down at first"
 
@@ -916,12 +957,18 @@ class TestRoutingStatus:
     """
 
     def test_probes_every_candidate_and_says_who_would_win(self, mocker) -> None:
-        seen: list[str] = []
+        posts: list[str] = []
+        gets: list[str] = []
 
-        def get(url, **kwargs):
-            seen.append(url)
+        def post(url, json=None, **kwargs):
+            posts.append(url)
             return _FakeSyncResponse(200 if "valhalla1" in url else 503)
 
+        def get(url, **kwargs):
+            gets.append(url)
+            return _FakeSyncResponse(503)
+
+        mocker.patch.object(find.httpx, "post", post)
         mocker.patch.object(find.httpx, "get", get)
         mocker.patch.object(find.config, "ors_api_key", lambda: "test-key-123")
 
@@ -929,33 +976,39 @@ class TestRoutingStatus:
 
         assert status["key_configured"] is True
         assert status["key_length"] == len("test-key-123")
-        # Each Valhalla host is probed on its cheap /status endpoint, in order...
+        # Each Valhalla host is probed with a real route POST to its own URL...
         for index, base in enumerate(config.VALHALLA_URLS):
-            assert seen[index] == find._probe_url(base)
+            assert posts[index] == base
             assert status["candidates"][index]["route_url"] == base
+            assert status["candidates"][index]["probe_url"] == base
         # ...and ORS comes last, probed only after Valhalla failed.
-        assert seen[len(config.VALHALLA_URLS)].startswith(
-            config.OPENROUTESERVICE_URL
-        )
+        assert gets[0].startswith(config.OPENROUTESERVICE_URL)
         assert status["candidates"][-1]["kind"] == "ors"
         assert status["would_pick"] == "https://valhalla1.openstreetmap.de/route"
         assert all(c["latency_ms"] >= 0 for c in status["candidates"])
         assert all(c["ok"] is (i == 1) for i, c in enumerate(status["candidates"]))
 
     def test_without_a_key_ors_is_reported_skipped_not_probed(self, mocker) -> None:
-        seen: list[str] = []
+        posts: list[str] = []
+        gets: list[str] = []
 
-        def get(url, **kwargs):
-            seen.append(url)
+        def post(url, json=None, **kwargs):
+            posts.append(url)
             return _FakeSyncResponse(503)
 
+        def get(url, **kwargs):
+            gets.append(url)
+            return _FakeSyncResponse(503)
+
+        mocker.patch.object(find.httpx, "post", post)
         mocker.patch.object(find.httpx, "get", get)
 
         status = find.routing_status()
 
         assert status["key_configured"] is False
         assert status["key_length"] == 0
-        assert len(seen) == len(config.VALHALLA_URLS), "ORS must not be probed"
+        assert len(posts) == len(config.VALHALLA_URLS), "each host gets a route probe"
+        assert gets == [], "ORS must not be probed"
         ors = status["candidates"][-1]
         assert ors["skipped"] is True
         assert "OPENROUTESERVICE_API_KEY" in ors["error"]
@@ -963,12 +1016,16 @@ class TestRoutingStatus:
 
     def test_sends_the_key_but_never_reports_it(self, mocker) -> None:
         secret = "eyJhbGciOiJIUzI1NiJ9.secret-do-not-leak"
-        sent: dict = {}
+        ors_kwargs: dict = {}
+
+        def post(url, json=None, **kwargs):
+            return _FakeSyncResponse(503)
 
         def get(url, **kwargs):
-            sent.update(kwargs)
+            ors_kwargs.update(kwargs)
             return _FakeSyncResponse(403, text='{"error": "Access disallowed"}')
 
+        mocker.patch.object(find.httpx, "post", post)
         mocker.patch.object(find.httpx, "get", get)
         mocker.patch.object(find.config, "ors_api_key", lambda: secret)
 
@@ -977,7 +1034,7 @@ class TestRoutingStatus:
         wire = json.dumps(status)
         assert secret not in wire, "the API key must never reach the browser"
         # The key did go out on the probe request itself...
-        assert sent["headers"]["Authorization"] == secret
+        assert ors_kwargs["headers"]["Authorization"] == secret
         # ...while the browser sees the rejection body ORS returned.
         ors = status["candidates"][-1]
         assert ors["ok"] is False
@@ -989,6 +1046,7 @@ class TestRoutingStatus:
         def boom(url, **kwargs):
             raise find.httpx.ConnectError("connection refused")
 
+        mocker.patch.object(find.httpx, "post", boom)
         mocker.patch.object(find.httpx, "get", boom)
         mocker.patch.object(find.config, "ors_api_key", lambda: "k")
 
@@ -1000,6 +1058,11 @@ class TestRoutingStatus:
 
     def test_does_not_touch_the_cached_verdict(self, mocker) -> None:
         """A diagnostic must not change what the next real request does."""
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(200),
+        )
         mocker.patch.object(
             find.httpx, "get", lambda url, **kwargs: _FakeSyncResponse(200)
         )
@@ -1013,14 +1076,32 @@ class TestRoutingStatus:
         assert status["cached"]["ttl_s"] == find.ROUTER_OK_TTL_S
 
 
+# What a healthy Valhalla route POST answers with - the shape the probe
+# requires before it will call a host pickable.
+_DEFAULT_ROUTE = {"trip": {"summary": {"length": 0.123}}}
+
+
 class _FakeSyncResponse:
-    def __init__(self, status_code: int, text: str = "") -> None:
+    """A sync httpx.Response stand-in.
+
+    A 2xx carries ``_DEFAULT_ROUTE`` unless the test says otherwise, because
+    the Valhalla probe parses the body: a 200 without a ``trip`` must not
+    count as healthy.
+    """
+
+    def __init__(
+        self, status_code: int, text: str = "", json_body: object = _DEFAULT_ROUTE
+    ) -> None:
         self.status_code = status_code
         self.text = text
+        self._json_body = json_body
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise find.httpx.HTTPStatusError("bad", request=None, response=None)
+
+    def json(self) -> object:
+        return self._json_body
 
 
 class _FakeResponse:

@@ -640,7 +640,9 @@ class TestRoutingStatusEndpoint:
 
             return _Resp()
 
+        # Valhalla candidates probe with POST (a real route), ORS with GET.
         monkeypatch.setattr(find.httpx, "get", _get)
+        monkeypatch.setattr(find.httpx, "post", _get)
         return calls
 
     def test_without_a_key_ors_is_skipped_and_reported(

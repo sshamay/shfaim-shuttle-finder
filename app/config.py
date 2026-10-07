@@ -52,10 +52,11 @@ if _valhalla_env:
 else:
     VALHALLA_URLS = list(DEFAULT_VALHALLA_URLS)
 
-# How long to wait for a router's /status probe. Public demos answered in a
-# second from nearby networks but the app also runs in US data centers, where
-# the round trip to openstreetmap.de can exceed the old 3s and wrongly mark
-# every router down (all walk times become "~" estimates).
+# How long to wait for a router probe - a real, tiny walk request on both
+# backends, since a status endpoint answers while routes are refused. Public
+# demos answered in a second from nearby networks but the app also runs in US
+# data centers, where the round trip to openstreetmap.de can exceed the old
+# 3s and wrongly mark every router down (all walk times become "~" estimates).
 VALHALLA_PROBE_TIMEOUT_S = 10.0
 
 

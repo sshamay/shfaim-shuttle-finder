@@ -216,11 +216,12 @@ def _fake_router_server(
 ) -> Iterator[str]:
     """A local stand-in for a routing backend answering with ``payload``.
 
-    Valhalla is probed on GET /status and routes on POST /route; ORS is only
-    ever GET, probe and route alike. ``endpoint`` is the suffix the fixture
-    yields (``/route`` for Valhalla, "" for ORS) so the probe URL derivation
-    matches the real backends' URL shapes. ``payload`` receives the request
-    line (GET) or body (POST) so answer geometry can follow the query.
+    Valhalla is probed with a real tiny pedestrian POST /route and routes
+    the same way; ORS is only ever GET, probe and route alike. ``endpoint``
+    is the suffix the fixture yields (``/route`` for Valhalla, "" for ORS)
+    so the probed URL matches the real backends' URL shapes. ``payload``
+    receives the request line (GET) or body (POST) so answer geometry can
+    follow the query.
     """
 
     class Handler(http.server.BaseHTTPRequestHandler):
