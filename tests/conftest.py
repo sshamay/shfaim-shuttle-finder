@@ -362,8 +362,23 @@ def valhalla_response(length_km: float) -> dict[str, Any]:
 
 
 def ors_response(distance_m: float) -> dict[str, Any]:
-    """A minimal OpenRouteService directions success payload (metres)."""
-    return {"routes": [{"summary": {"distance": distance_m, "duration": 0.0}}]}
+    """A minimal OpenRouteService directions payload (GeoJSON, metres).
+
+    The documented simple GET answers GeoJSON, so the metre count lives under
+    features[0].properties.summary.distance.
+    """
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"summary": {"distance": distance_m, "duration": 0.0}},
+                "geometry": {"type": "LineString", "coordinates": []},
+            }
+        ],
+        "bbox": [],
+        "metadata": {"attribution": "test fixture"},
+    }
 
 
 def photon_feature(

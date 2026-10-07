@@ -219,7 +219,7 @@ class TestWalkingDistancesOrs:
         assert all(not r["is_estimate"] for r in results)
         assert all(r["walk_m"] == pytest.approx(820.0) for r in results)
 
-    def test_ors_requests_are_get_with_coordinates_and_key(
+    def test_ors_requests_are_get_with_start_and_end_and_key(
         self, stops_cache: Path, mocker
     ) -> None:
         self._patch_ors(mocker, api_key="sekrit")
@@ -234,9 +234,11 @@ class TestWalkingDistancesOrs:
 
         assert sent, "expected at least one directions request"
         request = sent[0]
-        assert request["url"].startswith(find.config.OPENROUTESERVICE_URL + "/")
+        # The documented simple GET: start/end query params, no path coords.
+        assert request["url"].startswith(find.config.OPENROUTESERVICE_URL + "?start=")
+        assert "&end=" in request["url"]
+        assert ";" not in request["url"], "the old path form answers 405 now"
         assert request["headers"]["Authorization"] == "sekrit"
-        assert request["params"].get("overview") == "false"
 
         # One request per stop destination, each with the origin fixed.
         assert len(sent) == len(find.load_stops())
@@ -253,7 +255,7 @@ class TestWalkingDistancesOrs:
             if calls["n"] == 1:
                 return _FakeGetResponse(None, status=500)
             if calls["n"] == 2:
-                return _FakeGetResponse({"routes": []})
+                return _FakeGetResponse({"features": []})
             return _FakeGetResponse(ors_response(300.0))
 
         mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeGetClient(handler))
@@ -748,18 +750,21 @@ class TestRouterPickOrs:
         assert find._pick_router() == find.config.OPENROUTESERVICE_URL
         assert sent["headers"]["Authorization"] == "sekrit"
 
-    def test_ors_probe_requests_a_low_overview(self, mocker) -> None:
-        sent: dict = {}
+    def test_ors_probe_uses_the_documented_start_end_form(self, mocker) -> None:
+        sent_url: dict = {}
 
         def get(url, timeout=None, **kwargs):
-            if "/status" not in url and not sent:
-                sent.update(kwargs)
+            if "/status" not in url:
+                sent_url["url"] = url
             return _FakeSyncResponse(200 if "/status" not in url else 503)
 
         mocker.patch.object(find.httpx, "get", get)
         mocker.patch.object(find.config, "ors_api_key", lambda: "sekrit")
         find._pick_router()
-        assert sent.get("params", {}).get("overview") == "false"
+        assert sent_url["url"].startswith(find.config.OPENROUTESERVICE_URL + "?start=")
+        assert "&end=" in sent_url["url"]
+        # The pre-9.x path form (/lon,lat;lon,lat) answers 405 from Render.
+        assert ";" not in sent_url["url"]
 
 
 class TestRouterCacheExpiry:

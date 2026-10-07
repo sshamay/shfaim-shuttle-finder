@@ -134,13 +134,24 @@ def _status_answers(url: str) -> bool:
 _ORS_PROBE = (34.7880, 32.0710, 34.7890, 32.0720)  # lon1, lat1, lon2, lat2
 
 
+def _ors_directions_url(
+    base: str, lon1: float, lat1: float, lon2: float, lat2: float
+) -> str:
+    """The simple GET the current ORS API documents: start/end query params.
+
+    The older ``/{lon},{lat};{lon},{lat}`` path form answers 405 now - the
+    deploy diagnostic caught exactly that on Render, where no-key probes from
+    a laptop never get past the 401 auth gate to see it.
+    """
+    return f"{base}?start={lon1},{lat1}&end={lon2},{lat2}"
+
+
 def _ors_answers(base: str) -> bool:
     """Probe OpenRouteService with a directions call, which also validates the key."""
     lon1, lat1, lon2, lat2 = _ORS_PROBE
     try:
         httpx.get(
-            f"{base}/{lon1},{lat1};{lon2},{lat2}",
-            params={"overview": "false"},
+            _ors_directions_url(base, lon1, lat1, lon2, lat2),
             headers={"Authorization": config.ors_api_key()},
             timeout=config.VALHALLA_PROBE_TIMEOUT_S,
         ).raise_for_status()
@@ -154,7 +165,6 @@ def _probe_outcome(
     route_url: str,
     probe_url: str,
     headers: dict[str, str] | None = None,
-    params: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """One live probe with its latency and failure reason, for diagnostics."""
     started = time.monotonic()
@@ -162,8 +172,6 @@ def _probe_outcome(
         kwargs: dict[str, Any] = {"timeout": config.VALHALLA_PROBE_TIMEOUT_S}
         if headers:
             kwargs["headers"] = headers
-        if params:
-            kwargs["params"] = params
         response = httpx.get(probe_url, **kwargs)
         latency_ms = round((time.monotonic() - started) * 1000)
         ok = 200 <= response.status_code < 300
@@ -206,7 +214,9 @@ def routing_status() -> dict[str, Any]:
         for base in config.VALHALLA_URLS
     ]
     lon1, lat1, lon2, lat2 = _ORS_PROBE
-    ors_probe = f"{config.OPENROUTESERVICE_URL}/{lon1},{lat1};{lon2},{lat2}"
+    ors_probe = _ors_directions_url(
+        config.OPENROUTESERVICE_URL, lon1, lat1, lon2, lat2
+    )
     if key:
         candidates.append(
             _probe_outcome(
@@ -214,7 +224,6 @@ def routing_status() -> dict[str, Any]:
                 config.OPENROUTESERVICE_URL,
                 ors_probe,
                 headers={"Authorization": key},
-                params={"overview": "false"},
             )
         )
     else:
@@ -286,9 +295,10 @@ def _is_ors(base: str) -> bool:
     """OpenRouteService answers on a different wire protocol than Valhalla.
 
     Valhalla POSTs a JSON costings payload and reports kilometres; ORS GETs
-    coordinates in the URL and reports metres. The picked backend's URL tells
-    the caller which shape to speak, so tests can stub a router with a bare
-    string and the routing layer still dispatches correctly.
+    start/end query params and reports metres in GeoJSON. The picked
+    backend's URL tells the caller which shape to speak, so tests can stub a
+    router with a bare string and the routing layer still dispatches
+    correctly.
     """
     return base.startswith(config.OPENROUTESERVICE_URL)
 
@@ -323,19 +333,22 @@ async def _ors_walk_m(
     origin: tuple[float, float],
     stop: dict[str, Any],
 ) -> float:
-    """Pedestrian metres from an OpenRouteService directions request."""
+    """Pedestrian metres from an OpenRouteService directions request.
+
+    The documented simple GET answers GeoJSON, with the metre count under
+    features[0].properties.summary.distance.
+    """
     lon1, lat1 = origin[1], origin[0]
     lon2, lat2 = stop["lon"], stop["lat"]
     r = await client.get(
-        f"{config.OPENROUTESERVICE_URL}/{lon1},{lat1};{lon2},{lat2}",
-        params={"overview": "false"},
+        _ors_directions_url(config.OPENROUTESERVICE_URL, lon1, lat1, lon2, lat2),
         headers={"Authorization": config.ors_api_key()},
         timeout=25,
     )
     r.raise_for_status()
     data = r.json()
-    routes = data.get("routes") or []
-    meters = routes[0]["summary"]["distance"]
+    features = data.get("features") or []
+    meters = features[0]["properties"]["summary"]["distance"]
     if not meters:
         raise ValueError("ors returned a zero-length route")
     return float(meters)
