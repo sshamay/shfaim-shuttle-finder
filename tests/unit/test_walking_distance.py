@@ -785,9 +785,117 @@ class TestRouterCacheExpiry:
         assert find._pick_router() == "http://localhost:8002/route"
 
 
+class TestRoutingStatus:
+    """The /api/routing-status diagnostic: what a cloud deploy sees.
+
+    The endpoint exists because on Render the only clue about a dead router is
+    otherwise the "~" banner. It must probe every candidate the way
+    _pick_router would, without touching the cached verdict, and without ever
+    putting the API key on the wire.
+    """
+
+    def test_probes_every_candidate_and_says_who_would_win(self, mocker) -> None:
+        seen: list[str] = []
+
+        def get(url, **kwargs):
+            seen.append(url)
+            return _FakeSyncResponse(200 if "valhalla1" in url else 503)
+
+        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.config, "ors_api_key", lambda: "test-key-123")
+
+        status = find.routing_status()
+
+        assert status["key_configured"] is True
+        assert status["key_length"] == len("test-key-123")
+        # Each Valhalla host is probed on its cheap /status endpoint, in order...
+        for index, base in enumerate(config.VALHALLA_URLS):
+            assert seen[index] == find._probe_url(base)
+            assert status["candidates"][index]["route_url"] == base
+        # ...and ORS comes last, probed only after Valhalla failed.
+        assert seen[len(config.VALHALLA_URLS)].startswith(
+            config.OPENROUTESERVICE_URL
+        )
+        assert status["candidates"][-1]["kind"] == "ors"
+        assert status["would_pick"] == "https://valhalla1.openstreetmap.de/route"
+        assert all(c["latency_ms"] >= 0 for c in status["candidates"])
+        assert all(c["ok"] is (i == 1) for i, c in enumerate(status["candidates"]))
+
+    def test_without_a_key_ors_is_reported_skipped_not_probed(self, mocker) -> None:
+        seen: list[str] = []
+
+        def get(url, **kwargs):
+            seen.append(url)
+            return _FakeSyncResponse(503)
+
+        mocker.patch.object(find.httpx, "get", get)
+
+        status = find.routing_status()
+
+        assert status["key_configured"] is False
+        assert status["key_length"] == 0
+        assert len(seen) == len(config.VALHALLA_URLS), "ORS must not be probed"
+        ors = status["candidates"][-1]
+        assert ors["skipped"] is True
+        assert "OPENROUTESERVICE_API_KEY" in ors["error"]
+        assert status["would_pick"] is None
+
+    def test_sends_the_key_but_never_reports_it(self, mocker) -> None:
+        secret = "eyJhbGciOiJIUzI1NiJ9.secret-do-not-leak"
+        sent: dict = {}
+
+        def get(url, **kwargs):
+            sent.update(kwargs)
+            return _FakeSyncResponse(403, text='{"error": "Access disallowed"}')
+
+        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.config, "ors_api_key", lambda: secret)
+
+        status = find.routing_status()
+
+        wire = json.dumps(status)
+        assert secret not in wire, "the API key must never reach the browser"
+        # The key did go out on the probe request itself...
+        assert sent["headers"]["Authorization"] == secret
+        # ...while the browser sees the rejection body ORS returned.
+        ors = status["candidates"][-1]
+        assert ors["ok"] is False
+        assert ors["http_status"] == 403
+        assert "Access disallowed" in ors["error"]
+        assert secret not in ors["probe_url"]
+
+    def test_connection_errors_are_reported_not_raised(self, mocker) -> None:
+        def boom(url, **kwargs):
+            raise find.httpx.ConnectError("connection refused")
+
+        mocker.patch.object(find.httpx, "get", boom)
+        mocker.patch.object(find.config, "ors_api_key", lambda: "k")
+
+        status = find.routing_status()  # must not raise
+
+        assert status["would_pick"] is None
+        assert all(c["ok"] is False for c in status["candidates"])
+        assert "ConnectError" in status["candidates"][0]["error"]
+
+    def test_does_not_touch_the_cached_verdict(self, mocker) -> None:
+        """A diagnostic must not change what the next real request does."""
+        mocker.patch.object(
+            find.httpx, "get", lambda url, **kwargs: _FakeSyncResponse(200)
+        )
+        mocker.patch.object(find, "_ROUTER_CACHE", "http://cached/route")
+        checked_at = find._ROUTER_CHECKED_AT
+
+        status = find.routing_status()
+
+        assert find._ROUTER_CHECKED_AT == checked_at
+        assert status["cached"]["router"] == "http://cached/route"
+        assert status["cached"]["ttl_s"] == find.ROUTER_OK_TTL_S
+
+
 class _FakeSyncResponse:
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, text: str = "") -> None:
         self.status_code = status_code
+        self.text = text
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:

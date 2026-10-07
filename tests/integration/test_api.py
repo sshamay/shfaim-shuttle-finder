@@ -557,6 +557,70 @@ class TestNoSecretsInResponses:
         assert "_rank" not in candidate
 
 
+class TestRoutingStatusEndpoint:
+    """The deploy diagnostic behind the "~" banner.
+
+    It must answer with probe results for every backend while keeping the
+    OpenRouteService key server-side, since the endpoint is public.
+    """
+
+    @staticmethod
+    def _stub_probes(
+        monkeypatch: pytest.MonkeyPatch, status: int
+    ) -> list[tuple[str, dict]]:
+        calls: list[tuple[str, dict]] = []
+
+        def _get(url: str, **kwargs) -> object:
+            calls.append((url, kwargs))
+
+            class _Resp:
+                status_code = status
+                text = "backend unhappy"
+
+            return _Resp()
+
+        monkeypatch.setattr(find.httpx, "get", _get)
+        return calls
+
+    def test_without_a_key_ors_is_skipped_and_reported(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub_probes(monkeypatch, status=503)
+
+        response = client.get("/api/routing-status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["key_configured"] is False
+        assert [c["kind"] for c in body["candidates"]] == ["valhalla", "valhalla", "ors"]
+        assert body["candidates"][0]["http_status"] == 503
+        assert "backend unhappy" in body["candidates"][0]["error"]
+        assert body["candidates"][-1]["skipped"] is True
+        assert "OPENROUTESERVICE_API_KEY" in body["candidates"][-1]["error"]
+        assert body["would_pick"] is None
+        assert "router" in body["cached"]
+
+    def test_with_a_key_ors_is_probed_but_the_key_stays_server_side(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._stub_probes(monkeypatch, status=403)
+        monkeypatch.setattr(config, "ors_api_key", lambda: "integration-secret-key-9")
+
+        response = client.get("/api/routing-status")
+
+        assert response.status_code == 200
+        assert "integration-secret-key-9" not in response.text, "key leaked"
+        body = response.json()
+        assert body["key_configured"] is True
+        assert body["key_length"] == len("integration-secret-key-9")
+        ors = body["candidates"][-1]
+        assert ors["kind"] == "ors"
+        assert ors["ok"] is False
+        assert ors["http_status"] == 403
+        # The key did go out on the probe request itself.
+        assert calls[-1][1]["headers"]["Authorization"] == "integration-secret-key-9"
+
+
 class TestUserJourney:
     def test_search_then_nearest_gives_a_consistent_answer(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch

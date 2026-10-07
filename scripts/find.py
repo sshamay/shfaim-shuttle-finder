@@ -149,6 +149,105 @@ def _ors_answers(base: str) -> bool:
         return False
 
 
+def _probe_outcome(
+    kind: str,
+    route_url: str,
+    probe_url: str,
+    headers: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """One live probe with its latency and failure reason, for diagnostics."""
+    started = time.monotonic()
+    try:
+        kwargs: dict[str, Any] = {"timeout": config.VALHALLA_PROBE_TIMEOUT_S}
+        if headers:
+            kwargs["headers"] = headers
+        if params:
+            kwargs["params"] = params
+        response = httpx.get(probe_url, **kwargs)
+        latency_ms = round((time.monotonic() - started) * 1000)
+        ok = 200 <= response.status_code < 300
+        return {
+            "kind": kind,
+            "route_url": route_url,
+            "probe_url": probe_url,
+            "ok": ok,
+            "http_status": response.status_code,
+            "latency_ms": latency_ms,
+            "skipped": False,
+            # The error body never echoes the Authorization header, so a
+            # 401/403 from ORS is safe to show while the key stays hidden.
+            "error": None if ok else (getattr(response, "text", "") or "")[:200],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "kind": kind,
+            "route_url": route_url,
+            "probe_url": probe_url,
+            "ok": False,
+            "http_status": None,
+            "latency_ms": round((time.monotonic() - started) * 1000),
+            "skipped": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def routing_status() -> dict[str, Any]:
+    """Live health report over every routing backend, for debugging deploys.
+
+    Probes each candidate exactly the way ``_pick_router`` would, but without
+    touching the shared verdict cache, and reports which backend would win.
+    The API key itself is never included - only whether one is configured -
+    so the endpoint is safe to leave public.
+    """
+    key = config.ors_api_key()
+    candidates = [
+        _probe_outcome("valhalla", base, _probe_url(base))
+        for base in config.VALHALLA_URLS
+    ]
+    lon1, lat1, lon2, lat2 = _ORS_PROBE
+    ors_probe = f"{config.OPENROUTESERVICE_URL}/{lon1},{lat1};{lon2},{lat2}"
+    if key:
+        candidates.append(
+            _probe_outcome(
+                "ors",
+                config.OPENROUTESERVICE_URL,
+                ors_probe,
+                headers={"Authorization": key},
+                params={"overview": "false"},
+            )
+        )
+    else:
+        candidates.append(
+            {
+                "kind": "ors",
+                "route_url": config.OPENROUTESERVICE_URL,
+                "probe_url": ors_probe,
+                "ok": False,
+                "http_status": None,
+                "latency_ms": 0,
+                "skipped": True,
+                "error": "OPENROUTESERVICE_API_KEY is not set",
+            }
+        )
+
+    return {
+        "key_configured": bool(key),
+        "key_length": len(key),
+        # Same order as _pick_router: first Valhalla host that answers, else
+        # ORS only when every Valhalla host failed.
+        "would_pick": next((c["route_url"] for c in candidates if c["ok"]), None),
+        "cached": {
+            "router": _ROUTER_CACHE,
+            "checked_age_s": round(time.monotonic() - _ROUTER_CHECKED_AT, 1)
+            if _ROUTER_CHECKED_AT
+            else None,
+            "ttl_s": ROUTER_OK_TTL_S if _ROUTER_CACHE else ROUTER_FAIL_TTL_S,
+        },
+        "candidates": candidates,
+    }
+
+
 def _pick_router() -> str | None:
     """First routing backend that answers, cached with a TTL.
 

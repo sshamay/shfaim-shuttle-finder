@@ -107,6 +107,17 @@ async def api_nearest(lat: float, lon: float) -> dict[str, Any]:
     }
 
 
+@app.get("/api/routing-status")
+async def api_routing_status() -> dict[str, Any]:
+    """Probe every routing backend live and say which one would win.
+
+    Diagnostic for cloud deploys, where the only clue about a dead router is
+    otherwise the "~" estimate banner. Reports latencies, status codes and
+    error bodies, but never the API key itself.
+    """
+    return await asyncio.to_thread(find.routing_status)
+
+
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(
