@@ -120,10 +120,24 @@ def _probe_url(base: str) -> str:
     return base.rsplit("/", 1)[0] + "/status"
 
 
+def _valhalla_headers() -> dict[str, str]:
+    """Identify this client to the FOSSGIS public demo, as its README asks.
+
+    Their note in valhalla's README: apps hitting the public demo server
+    should send an identifying X-Client-Id header. The local container in
+    dev gets the same headers - harmless, and one code path instead of two.
+    """
+    return {"User-Agent": config.USER_AGENT, "X-Client-Id": config.CLIENT_ID}
+
+
 def _status_answers(url: str) -> bool:
     """Does a probe endpoint answer 200 within the probe timeout?"""
     try:
-        httpx.get(url, timeout=config.VALHALLA_PROBE_TIMEOUT_S).raise_for_status()
+        httpx.get(
+            url,
+            timeout=config.VALHALLA_PROBE_TIMEOUT_S,
+            headers=_valhalla_headers(),
+        ).raise_for_status()
         return True
     except Exception:  # noqa: BLE001,S110
         return False
@@ -210,7 +224,7 @@ def routing_status() -> dict[str, Any]:
     """
     key = config.ors_api_key()
     candidates = [
-        _probe_outcome("valhalla", base, _probe_url(base))
+        _probe_outcome("valhalla", base, _probe_url(base), headers=_valhalla_headers())
         for base in config.VALHALLA_URLS
     ]
     lon1, lat1, lon2, lat2 = _ORS_PROBE
@@ -317,7 +331,7 @@ async def _valhalla_walk_m(
         ],
         "costing": "pedestrian",
     }
-    r = await client.post(router, json=payload, timeout=25)
+    r = await client.post(router, json=payload, timeout=25, headers=_valhalla_headers())
     r.raise_for_status()
     data = r.json()
     if data.get("error"):

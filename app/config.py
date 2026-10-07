@@ -24,6 +24,11 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "shfaim-shuttle-finder/1.0 (personal project)"
 
+# FOSSGIS asks apps that request their public Valhalla demo
+# (valhalla1.openstreetmap.de) to identify themselves with an X-Client-Id
+# header alongside the usual User-Agent - see the note in valhalla's README.
+CLIENT_ID = "shfaim-shuttle-finder"
+
 # Routing backends, tried in order: a local Valhalla container
 # (scripts/setup_routing.sh), a public Valhalla instance, then OpenRouteService
 # when OPENROUTESERVICE_API_KEY is set. VALHALLA_URL points at the first

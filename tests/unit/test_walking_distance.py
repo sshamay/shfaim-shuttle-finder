@@ -192,6 +192,22 @@ class TestWalkingDistancesRouted:
         results = find.asyncio.run(find.walking_distances((32.07, 34.79), find.load_stops()))
         assert all(r["is_estimate"] for r in results), "0 m is not a usable walking route"
 
+    def test_route_identifies_the_client(self, mocker) -> None:
+        """The identification headers ride the route POST too, not just probes."""
+        mocker.patch.object(find, "_pick_router", lambda: "http://router/route")
+        sent: list[dict] = []
+
+        def handler(request):
+            sent.append(request.headers)
+            return _FakeResponse(valhalla_response(0.402))
+
+        mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeClient(handler))
+        find.asyncio.run(find.walking_distances((32.07, 34.79), find.load_stops()))
+
+        assert sent, "expected at least one route request"
+        assert all(h["X-Client-Id"] == "shfaim-shuttle-finder" for h in sent)
+        assert all(h["User-Agent"] == config.USER_AGENT for h in sent)
+
 
 class TestWalkingDistancesOrs:
     """The OpenRouteService backend, once _pick_router has chosen it."""
@@ -666,7 +682,7 @@ class TestRouterPick:
         """Localhost first: the container is authoritative and free."""
         seen: list[str] = []
 
-        def get(url, timeout=None):
+        def get(url, **kwargs):
             seen.append(url)
             if "localhost" in url:
                 return _FakeSyncResponse(200)
@@ -677,7 +693,7 @@ class TestRouterPick:
         assert seen[0].endswith("/status")
 
     def test_falls_through_to_public_host(self, mocker) -> None:
-        def get(url, timeout=None):
+        def get(url, **kwargs):
             if "localhost" in url:
                 return _FakeSyncResponse(503)
             if "valhalla1.openstreetmap.de" in url:
@@ -688,11 +704,11 @@ class TestRouterPick:
         assert find._pick_router() == "https://valhalla1.openstreetmap.de/route"
 
     def test_returns_none_when_all_hosts_fail(self, mocker) -> None:
-        mocker.patch.object(find.httpx, "get", lambda url, timeout=None: _FakeSyncResponse(503))
+        mocker.patch.object(find.httpx, "get", lambda url, **kwargs: _FakeSyncResponse(503))
         assert find._pick_router() is None
 
     def test_returns_none_when_all_hosts_raise(self, mocker) -> None:
-        def boom(url, timeout=None):
+        def boom(url, **kwargs):
             raise find.httpx.ConnectError("refused")
 
         mocker.patch.object(find.httpx, "get", boom)
@@ -701,7 +717,7 @@ class TestRouterPick:
     def test_success_is_cached_to_avoid_reprobing(self, mocker) -> None:
         calls = {"n": 0}
 
-        def get(url, timeout=None):
+        def get(url, **kwargs):
             calls["n"] += 1
             return _FakeSyncResponse(200)
 
@@ -710,6 +726,25 @@ class TestRouterPick:
         find._pick_router()
         find._pick_router()
         assert calls["n"] == 1, f"probed {calls['n']} times, should cache the result"
+
+    def test_probes_identify_the_client(self, mocker) -> None:
+        """FOSSGIS asks public-demo clients for an X-Client-Id header.
+
+        Every probe to a Valhalla host must carry it (plus a real User-Agent
+        instead of httpx's default), or a published app rides unidentified.
+        """
+        seen: list[dict] = []
+
+        def get(url, **kwargs):
+            seen.append(kwargs)
+            return _FakeSyncResponse(200)
+
+        mocker.patch.object(find.httpx, "get", get)
+        find._pick_router()
+
+        headers = seen[0]["headers"]
+        assert headers["X-Client-Id"] == "shfaim-shuttle-finder"
+        assert headers["User-Agent"] == config.USER_AGENT
 
 
 class TestRouterPickOrs:
@@ -774,7 +809,7 @@ class TestRouterCacheExpiry:
         """A container that comes back must be noticed without a server restart."""
         healthy = {"v": False}
 
-        def get(url, timeout=None):
+        def get(url, **kwargs):
             return _FakeSyncResponse(200 if healthy["v"] else 503)
 
         mocker.patch.object(find.httpx, "get", get)
@@ -934,8 +969,8 @@ class _FakeClient:
     async def __aexit__(self, *exc: object) -> None:
         return None
 
-    async def post(self, url: str, json=None, timeout=None) -> _FakeResponse:
-        request = _FakeRequest(json)
+    async def post(self, url: str, json=None, timeout=None, headers=None) -> _FakeResponse:
+        request = _FakeRequest(json, headers)
         result = self._handler(request)
         if isinstance(result, _FakeResponse):
             return result
@@ -945,8 +980,9 @@ class _FakeClient:
 class _FakeRequest:
     """Carries the JSON body the way httpx does, so tests can assert on it."""
 
-    def __init__(self, payload: object) -> None:
+    def __init__(self, payload: object, headers: dict | None = None) -> None:
         self.content = json.dumps(payload)
+        self.headers = headers or {}
 
 
 class _FakeGetResponse:
