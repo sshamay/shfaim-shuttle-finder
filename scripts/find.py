@@ -115,8 +115,47 @@ ROUTER_OK_TTL_S = 300.0
 ROUTER_FAIL_TTL_S = 20.0
 
 
+def _probe_url(base: str) -> str:
+    """The cheap health endpoint Valhalla keeps beside its /route handler."""
+    return base.rsplit("/", 1)[0] + "/status"
+
+
+def _status_answers(url: str) -> bool:
+    """Does a probe endpoint answer 200 within the probe timeout?"""
+    try:
+        httpx.get(url, timeout=config.VALHALLA_PROBE_TIMEOUT_S).raise_for_status()
+        return True
+    except Exception:  # noqa: BLE001,S110
+        return False
+
+
+# ORS has no /status, so a minimal directions call is its probe. The pair is a
+# short walk in central Tel Aviv, cheap in both time and quota.
+_ORS_PROBE = (34.7880, 32.0710, 34.7890, 32.0720)  # lon1, lat1, lon2, lat2
+
+
+def _ors_answers(base: str) -> bool:
+    """Probe OpenRouteService with a directions call, which also validates the key."""
+    lon1, lat1, lon2, lat2 = _ORS_PROBE
+    try:
+        httpx.get(
+            f"{base}/{lon1},{lat1};{lon2},{lat2}",
+            params={"overview": "false"},
+            headers={"Authorization": config.ors_api_key()},
+            timeout=config.VALHALLA_PROBE_TIMEOUT_S,
+        ).raise_for_status()
+        return True
+    except Exception:  # noqa: BLE001,S110
+        return False
+
+
 def _pick_router() -> str | None:
-    """First Valhalla host that answers, cached with a TTL.
+    """First routing backend that answers, cached with a TTL.
+
+    Candidates run in order: each Valhalla host in ``config.VALHALLA_URLS``
+    (probed on its ``/status`` endpoint), then OpenRouteService when an
+    ``OPENROUTESERVICE_API_KEY`` is configured (probed with a minimal
+    directions request). The first that answers is used for the whole request.
 
     Probing costs a few seconds and was previously repeated for every stop,
     which turned a routing outage into a multi-minute request. Caching the
@@ -132,16 +171,75 @@ def _pick_router() -> str | None:
 
     found: str | None = None
     for base in config.VALHALLA_URLS:
-        try:
-            httpx.get(base.rsplit("/", 1)[0] + "/status", timeout=config.VALHALLA_PROBE_TIMEOUT_S).raise_for_status()
+        if _status_answers(_probe_url(base)):
             found = base
             break
-        except Exception:  # noqa: BLE001,S110
-            continue
+    if found is None and config.ors_api_key():
+        if _ors_answers(config.OPENROUTESERVICE_URL):
+            found = config.OPENROUTESERVICE_URL
 
     _ROUTER_CACHE = found
     _ROUTER_CHECKED_AT = now
     return found
+
+
+def _is_ors(base: str) -> bool:
+    """OpenRouteService answers on a different wire protocol than Valhalla.
+
+    Valhalla POSTs a JSON costings payload and reports kilometres; ORS GETs
+    coordinates in the URL and reports metres. The picked backend's URL tells
+    the caller which shape to speak, so tests can stub a router with a bare
+    string and the routing layer still dispatches correctly.
+    """
+    return base.startswith(config.OPENROUTESERVICE_URL)
+
+
+async def _valhalla_walk_m(
+    client: httpx.AsyncClient,
+    router: str,
+    origin: tuple[float, float],
+    stop: dict[str, Any],
+) -> float:
+    """Pedestrian metres from a Valhalla POST /route (kilometres on the wire)."""
+    payload = {
+        "locations": [
+            {"lat": origin[0], "lon": origin[1]},
+            {"lat": stop["lat"], "lon": stop["lon"]},
+        ],
+        "costing": "pedestrian",
+    }
+    r = await client.post(router, json=payload, timeout=25)
+    r.raise_for_status()
+    data = r.json()
+    if data.get("error"):
+        raise ValueError("valhalla reported an error")
+    meters = data["trip"]["summary"]["length"] * 1000.0
+    if not meters:
+        raise ValueError("valhalla returned a zero-length route")
+    return float(meters)
+
+
+async def _ors_walk_m(
+    client: httpx.AsyncClient,
+    origin: tuple[float, float],
+    stop: dict[str, Any],
+) -> float:
+    """Pedestrian metres from an OpenRouteService directions request."""
+    lon1, lat1 = origin[1], origin[0]
+    lon2, lat2 = stop["lon"], stop["lat"]
+    r = await client.get(
+        f"{config.OPENROUTESERVICE_URL}/{lon1},{lat1};{lon2},{lat2}",
+        params={"overview": "false"},
+        headers={"Authorization": config.ors_api_key()},
+        timeout=25,
+    )
+    r.raise_for_status()
+    data = r.json()
+    routes = data.get("routes") or []
+    meters = routes[0]["summary"]["distance"]
+    if not meters:
+        raise ValueError("ors returned a zero-length route")
+    return float(meters)
 
 
 async def walking_distances(
@@ -164,14 +262,6 @@ async def walking_distances(
             "is_estimate": True,
         }
 
-        payload = {
-            "locations": [
-                {"lat": origin[0], "lon": origin[1]},
-                {"lat": stop["lat"], "lon": stop["lon"]},
-            ],
-            "costing": "pedestrian",
-        }
-
         # With no router at all, go straight to the estimate. Probing dead
         # public hosts once per stop added tens of seconds per request.
         if router is None:
@@ -179,13 +269,12 @@ async def walking_distances(
 
         async with semaphore:
             try:
-                r = await client.post(router, json=payload, timeout=25)
-                r.raise_for_status()
-                data = r.json()
-                if not data.get("error"):
-                    meters = data["trip"]["summary"]["length"] * 1000.0
-                    if meters > 0:
-                        return {"stop": stop, "walk_m": meters, "is_estimate": False}
+                if _is_ors(router):
+                    meters = await _ors_walk_m(client, origin, stop)
+                else:
+                    meters = await _valhalla_walk_m(client, router, origin, stop)
+                if meters > 0:
+                    return {"stop": stop, "walk_m": meters, "is_estimate": False}
             except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError):
                 pass
             return fallback

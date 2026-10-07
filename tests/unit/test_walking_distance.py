@@ -1,8 +1,10 @@
 """Walking-distance math and stop loading.
 
 The cases here are drawn from real failures during development: the OSRM
-profile-ignoring bug, the Modi'in/Tel Aviv same-name collision, and the
-straight-line fallback used when no router is available.
+profile-ignoring bug (which killed the OSRM backend), the Modi'in/Tel Aviv
+same-name collision, and the straight-line fallback used when no router is
+available. Routing now comes from Valhalla first and OpenRouteService as the
+cloud fallback.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import pytest
 
 from app import config
 from scripts import find
-from tests.conftest import valhalla_response, write_cache
+from tests.conftest import ors_response, valhalla_response, write_cache
 
 
 class TestHaversine:
@@ -189,6 +191,92 @@ class TestWalkingDistancesRouted:
         )
         results = find.asyncio.run(find.walking_distances((32.07, 34.79), find.load_stops()))
         assert all(r["is_estimate"] for r in results), "0 m is not a usable walking route"
+
+
+class TestWalkingDistancesOrs:
+    """The OpenRouteService backend, once _pick_router has chosen it."""
+
+    def _patch_ors(self, mocker, api_key: str = "test-key") -> None:
+        mocker.patch.object(
+            find, "_pick_router", lambda: find.config.OPENROUTESERVICE_URL
+        )
+        mocker.patch.object(find.config, "ors_api_key", lambda: api_key)
+
+    def test_uses_ors_distance_when_selected(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        self._patch_ors(mocker)
+
+        def handler(request):
+            return _FakeGetResponse(ors_response(820.0))
+
+        mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeGetClient(handler))
+
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert len(results) == 3, "one result per stop"
+        assert all(not r["is_estimate"] for r in results)
+        assert all(r["walk_m"] == pytest.approx(820.0) for r in results)
+
+    def test_ors_requests_are_get_with_coordinates_and_key(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        self._patch_ors(mocker, api_key="sekrit")
+        sent: list[dict] = []
+
+        def handler(request):
+            sent.append(request)
+            return _FakeGetResponse(ors_response(400.0))
+
+        mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeGetClient(handler))
+        find.asyncio.run(find.walking_distances((32.07, 34.79), find.load_stops()))
+
+        assert sent, "expected at least one directions request"
+        request = sent[0]
+        assert request["url"].startswith(find.config.OPENROUTESERVICE_URL + "/")
+        assert request["headers"]["Authorization"] == "sekrit"
+        assert request["params"].get("overview") == "false"
+
+        # One request per stop destination, each with the origin fixed.
+        assert len(sent) == len(find.load_stops())
+
+    def test_mixed_failures_fall_back_per_stop(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """A 500 and a malformed payload must not lose the batch."""
+        self._patch_ors(mocker)
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _FakeGetResponse(None, status=500)
+            if calls["n"] == 2:
+                return _FakeGetResponse({"routes": []})
+            return _FakeGetResponse(ors_response(300.0))
+
+        mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeGetClient(handler))
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert len(results) == 3
+        assert sum(1 for r in results if r["is_estimate"]) == 2
+        assert sum(1 for r in results if not r["is_estimate"]) == 1
+
+    def test_zero_length_ors_route_is_rejected(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        self._patch_ors(mocker)
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(lambda r: _FakeGetResponse(ors_response(0.0))),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert all(r["is_estimate"] for r in results)
 
 
 class TestFindNearest:
@@ -590,12 +678,12 @@ class TestRouterPick:
         def get(url, timeout=None):
             if "localhost" in url:
                 return _FakeSyncResponse(503)
-            if "routing.openstreetmap.de" in url:
+            if "valhalla1.openstreetmap.de" in url:
                 return _FakeSyncResponse(200)
             return _FakeSyncResponse(503)
 
         mocker.patch.object(find.httpx, "get", get)
-        assert find._pick_router() == "https://routing.openstreetmap.de/routed-valhalla/route"
+        assert find._pick_router() == "https://valhalla1.openstreetmap.de/route"
 
     def test_returns_none_when_all_hosts_fail(self, mocker) -> None:
         mocker.patch.object(find.httpx, "get", lambda url, timeout=None: _FakeSyncResponse(503))
@@ -620,6 +708,58 @@ class TestRouterPick:
         find._pick_router()
         find._pick_router()
         assert calls["n"] == 1, f"probed {calls['n']} times, should cache the result"
+
+
+class TestRouterPickOrs:
+    """OpenRouteService is the fallback when every Valhalla host is down."""
+
+    def _patch_ors(self, mocker, key: str) -> None:
+        mocker.patch.object(find.config, "ors_api_key", lambda: key)
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(
+                200 if "/status" not in url else 503
+            ),
+        )
+
+    def test_ors_is_used_when_all_valhalla_hosts_fail(self, mocker) -> None:
+        self._patch_ors(mocker, "test-key")
+        assert find._pick_router() == find.config.OPENROUTESERVICE_URL
+
+    def test_ors_is_not_touched_without_a_key(self, mocker) -> None:
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(503),
+        )
+        assert find._pick_router() is None
+
+    def test_ors_probe_sends_the_api_key(self, mocker) -> None:
+        sent: dict = {}
+
+        def get(url, timeout=None, **kwargs):
+            if "/status" not in url:
+                sent.update(kwargs)
+            return _FakeSyncResponse(200 if "/status" not in url else 503)
+
+        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.config, "ors_api_key", lambda: "sekrit")
+        assert find._pick_router() == find.config.OPENROUTESERVICE_URL
+        assert sent["headers"]["Authorization"] == "sekrit"
+
+    def test_ors_probe_requests_a_low_overview(self, mocker) -> None:
+        sent: dict = {}
+
+        def get(url, timeout=None, **kwargs):
+            if "/status" not in url and not sent:
+                sent.update(kwargs)
+            return _FakeSyncResponse(200 if "/status" not in url else 503)
+
+        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.config, "ors_api_key", lambda: "sekrit")
+        find._pick_router()
+        assert sent.get("params", {}).get("overview") == "false"
 
 
 class TestRouterCacheExpiry:
@@ -694,3 +834,38 @@ class _FakeRequest:
 
     def __init__(self, payload: object) -> None:
         self.content = json.dumps(payload)
+
+
+class _FakeGetResponse:
+    """Stand-in for httpx.Response, enough for the ORS GET call site."""
+
+    def __init__(self, payload: object, status: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise find.httpx.HTTPStatusError("bad", request=None, response=None)
+
+    def json(self) -> object:
+        return self._payload
+
+
+class _FakeGetClient:
+    """Async client stand-in whose get() delegates to a handler."""
+
+    def __init__(self, handler) -> None:
+        self._handler = handler
+
+    async def __aenter__(self) -> "_FakeGetClient":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def get(self, url, *, params=None, headers=None, timeout=None) -> _FakeGetResponse:
+        request = {"url": url, "params": params or {}, "headers": headers or {}}
+        result = self._handler(request)
+        if isinstance(result, _FakeGetResponse):
+            return result
+        return _FakeGetResponse(result)

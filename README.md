@@ -118,15 +118,22 @@ shuttle is due, which this does not cover.
 
 ## Things worth knowing
 
-**The OSRM public demo server is not usable for walking.** It silently ignores
-the `foot`/`walking` profile and answers with driving routes. A trip that walks
-155m came back as a 1646m drive. Local Valhalla returns 1255m. If you replace
-the routing backend, check that `foot` actually changes the answer.
+**Routing backends, in order.** Walk times are exact when a pedestrian router
+is reachable: a local Valhalla container (`scripts/setup_routing.sh`) is tried
+first, then a public Valhalla instance, then OpenRouteService as the
+cloud-friendly fallback (free key, ~2,000 directions/day, no credit card).
+OpenRouteService matters because the app also runs in US data centers, where
+the round trip to `openstreetmap.de` times out and would otherwise leave every
+walk an estimate. Set its key as `OPENROUTESERVICE_API_KEY` in Render's
+dashboard; `render.yaml` keeps it out of sync so the value stays secret. The
+old OSRM public demo was dropped because it ignores the `foot` profile and
+answers every query with driving distances — when picking a backend, check
+that walking actually changes the answer.
 
-**If Valhalla is down, results degrade quietly.** The app falls back to
+**If every router is down, results degrade quietly.** The app falls back to
 straight-line estimates, marked `~`, with a banner. Those are optimistically
-low, typically by 20%. Restart with `./scripts/setup_routing.sh`; the app
-notices within ~20s, no restart needed.
+low, typically by 20%. Start `scripts/setup_routing.sh` for the local
+container; a router that comes back is noticed within ~20s, no restart needed.
 
 **Address-to-stop only, no timetable.** This finds the stop, not the bus.
 

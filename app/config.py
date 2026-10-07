@@ -24,22 +24,22 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "shfaim-shuttle-finder/1.0 (personal project)"
 
-OSRM_FOOT_URL = "https://router.project-osrm.org/route/v1/foot"
-
-# OSRM's public demo server ignores the profile parameter and answers every
-# query with driving distances, so walking routes come from Valhalla instead,
-# which supports pedestrian costing properly.
-#
-# Preference order: a local Valhalla container, then the public instances.
-# Run the container with scripts/setup_routing.sh for the local one.
-# Set VALHALLA_URL to a routing server you control (e.g. a VPS running that
-# container); it is probed first, ahead of the public demos, so deployments
-# that cannot reach openstreetmap.de get exact walk times.
+# Routing backends, tried in order: a local Valhalla container
+# (scripts/setup_routing.sh), a public Valhalla instance, then OpenRouteService
+# when OPENROUTESERVICE_API_KEY is set. VALHALLA_URL points at the first
+# candidate when set, so a deployment that cannot reach the public demos can
+# use a server of its own.
 DEFAULT_VALHALLA_URLS = [
     "http://localhost:8002/route",
-    "https://routing.openstreetmap.de/routed-valhalla/route",
     "https://valhalla1.openstreetmap.de/route",
 ]
+
+# OpenRouteService is the cloud-friendly fallback: reachable from US data
+# centers that time out against openstreetmap.de, with a free tier (~2,000
+# directions/day) that covers a shuttle finder. Its foot-walking profile
+# returns real pedestrian distances, unlike the OSRM public demo which answers
+# every query as a drive.
+OPENROUTESERVICE_URL = "https://api.openrouteservice.org/v2/directions/foot-walking"
 
 _valhalla_env = os.environ.get("VALHALLA_URL", "").strip()
 if _valhalla_env:
@@ -52,3 +52,29 @@ else:
 # the round trip to openstreetmap.de can exceed the old 3s and wrongly mark
 # every router down (all walk times become "~" estimates).
 VALHALLA_PROBE_TIMEOUT_S = 10.0
+
+
+def _load_dotenv() -> None:
+    """Read .env into os.environ without overriding real env vars."""
+    env_path = BASE_DIR / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if value and key not in os.environ:
+            os.environ[key] = value
+
+
+def ors_api_key() -> str:
+    """The OpenRouteService API key, or "" when none is configured.
+
+    Read lazily so local development can keep it in .env and tests can pin it
+    either way; Render sets the value from the dashboard (render.yaml keeps it
+    out of sync).
+    """
+    _load_dotenv()
+    return os.environ.get("OPENROUTESERVICE_API_KEY", "").strip()

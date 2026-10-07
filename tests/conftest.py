@@ -81,7 +81,7 @@ def _block_external_network() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _isolate_router_cache() -> None:
-    """Clear the Valhalla host cache so tests cannot leak state into each other."""
+    """Clear the router cache so tests cannot leak state into each other."""
     from scripts import find
 
     find._ROUTER_CACHE = None
@@ -89,6 +89,19 @@ def _isolate_router_cache() -> None:
     yield
     find._ROUTER_CACHE = None
     find._ROUTER_CHECKED_AT = 0.0
+
+
+@pytest.fixture(autouse=True)
+def _no_ors_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Routing tests assume no OpenRouteService key unless one is set.
+
+    A developer .env may configure OPENROUTESERVICE_API_KEY for local runs;
+    pinning it off here keeps router-pick tests deterministic no matter what
+    the machine has in its environment. Tests that want ORS set their own key.
+    """
+    from app import config
+
+    monkeypatch.setattr(config, "ors_api_key", lambda: "")
 
 
 # --- sample data -----------------------------------------------------------
@@ -346,6 +359,11 @@ def routed_600m(monkeypatch: pytest.MonkeyPatch) -> None:
 def valhalla_response(length_km: float) -> dict[str, Any]:
     """A minimal Valhalla /route success payload."""
     return {"trip": {"summary": {"length": length_km}}}
+
+
+def ors_response(distance_m: float) -> dict[str, Any]:
+    """A minimal OpenRouteService directions success payload (metres)."""
+    return {"routes": [{"summary": {"distance": distance_m, "duration": 0.0}}]}
 
 
 def photon_feature(
