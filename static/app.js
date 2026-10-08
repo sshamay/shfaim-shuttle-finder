@@ -10,10 +10,10 @@ let originMarker = null;
 let stopMarkers = [];
 let walkLine = null;
 
-// The routed walk from the origin to a stop, drawn only when the backend
-// returned real path geometry (OpenRouteService). Estimates and local
-// Valhalla send none, so those searches simply show no line. Geometry comes
-// as GeoJSON [lon, lat] pairs; Leaflet wants [lat, lon].
+// The routed walk from the origin to a stop, drawn whenever the backend
+// returned real path geometry (ORS GeoJSON, decoded Valhalla polyline6, or
+// BRouter GeoJSON). Estimates carry none, so those searches show no line.
+// Geometry comes as GeoJSON [lon, lat] pairs; Leaflet wants [lat, lon].
 function drawWalkLine(geometry) {
   if (walkLine) {
     walkLine.remove();
@@ -22,7 +22,12 @@ function drawWalkLine(geometry) {
   if (!geometry || geometry.length < 2) return;
   walkLine = L.polyline(
     geometry.map(([lon, lat]) => [lat, lon]),
-    { color: "#4a8cff", weight: 5, opacity: 0.85, className: "walk-route" }
+    {
+      color: "#2563eb",
+      weight: 7,
+      opacity: 1,
+      className: "walk-route",
+    }
   ).addTo(map);
 }
 

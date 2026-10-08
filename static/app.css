@@ -421,3 +421,9 @@ main {
   table.lines td.no,
   table.lines td.code { text-align: center; }
 }
+/* The walk line: a white halo keeps the blue path readable over any tile. */
+path.walk-route {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 2px #fff);
+}
