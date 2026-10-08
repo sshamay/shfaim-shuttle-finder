@@ -303,12 +303,15 @@ function render(data) {
   ]);
   map.fitBounds(bounds.pad(0.2));
   if (originMarker) originMarker.remove();
-  originMarker = L.circleMarker([data.origin.lat, data.origin.lon], {
-    radius: 8,
-    color: "#fff",
-    weight: 2,
-    fillColor: "#4a8cff",
-    fillOpacity: 1,
+  originMarker = L.marker([data.origin.lat, data.origin.lon], {
+    icon: L.divIcon({
+      className: "",
+      html: '<div class="origin-dot"><span class="origin-pulse"></span><span class="origin-core"></span></div>',
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+    }),
+    title: "Your destination",
+    zIndexOffset: 1000,
   }).addTo(map);
 }
 
