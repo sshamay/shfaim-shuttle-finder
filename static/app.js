@@ -306,9 +306,9 @@ function render(data) {
   originMarker = L.marker([data.origin.lat, data.origin.lon], {
     icon: L.divIcon({
       className: "",
-      html: '<div class="origin-dot"><span class="origin-pulse"></span><span class="origin-core"></span></div>',
-      iconSize: [28, 28],
-      iconAnchor: [14, 14],
+      html: '<div class="pin origin"><span class="origin-glyph"></span></div>',
+      iconSize: [32, 32],
+      iconAnchor: [16, 32],
     }),
     title: "Your destination",
     zIndexOffset: 1000,

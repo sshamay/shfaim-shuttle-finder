@@ -299,47 +299,24 @@ details summary {
   transform: rotate(45deg);
 }
 
-/* The searched destination: a bright core dot inside a pulsing halo, so it
-   reads instantly against any tile and never blends with the stop pins. */
-.origin-dot {
-  position: relative;
-  width: 28px;
-  height: 28px;
-}
-
-.origin-dot .origin-pulse {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: rgba(37, 99, 235, 0.35);
-  animation: origin-pulse 1.8s ease-out infinite;
-}
-
-.origin-dot .origin-core {
-  position: absolute;
-  left: 5px;
-  top: 5px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+/* The searched destination: the stops' own teardrop, recoloured to the
+   walk-line blue with a white ring, so it belongs to the same family yet is
+   never mistaken for a stop. Sized like the best-stop pin but chunkier. */
+.pin.origin {
+  width: 32px;
+  height: 32px;
   background: #2563eb;
   border: 3px solid #fff;
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.4),
-    0 2px 6px rgba(0, 0, 0, 0.45);
+    0 1px 4px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
-@keyframes origin-pulse {
-  0% { transform: scale(0.5); opacity: 0.9; }
-  70% { transform: scale(1); opacity: 0; }
-  100% { transform: scale(1); opacity: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .origin-dot .origin-pulse {
-    animation: none;
-    opacity: 0.35;
-  }
+.pin.origin .origin-glyph {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
 }
 
 /* The map fills the viewport behind the panel. It must stay above the body
