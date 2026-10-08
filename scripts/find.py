@@ -125,7 +125,7 @@ def _valhalla_headers() -> dict[str, str]:
     return {"User-Agent": config.USER_AGENT, "X-Client-Id": config.CLIENT_ID}
 
 
-# Both backends are probed with a real, minimal directions request over this
+# Every backend is probed with a real, minimal directions request over this
 # short walk in central Tel Aviv - cheap in both time and quota. A status
 # endpoint alone proves nothing for Valhalla: valhalla1 answers GET /status
 # from Oregon while POST /route is refused, and picking it on that answer
@@ -142,6 +142,24 @@ def _valhalla_probe_payload() -> dict[str, Any]:
     }
 
 
+def _valhalla_has_route(body: object) -> bool:
+    """A 200 must carry a trip: an interposed portal or proxy page would
+    otherwise count as healthy, win the pick, and then fail every real
+    routing call for the whole cache TTL."""
+    return isinstance(body, dict) and "trip" in body
+
+
+def _brouter_has_route(body: object) -> bool:
+    """The BRouter probe body must be GeoJSON with an actual path in it."""
+    if not isinstance(body, dict):
+        return False
+    features = body.get("features")
+    if not isinstance(features, list) or not features:
+        return False
+    geometry = (features[0] or {}).get("geometry") or {}
+    return bool(geometry.get("coordinates"))
+
+
 def _ors_directions_url(
     base: str, lon1: float, lat1: float, lon2: float, lat2: float
 ) -> str:
@@ -152,6 +170,22 @@ def _ors_directions_url(
     a laptop never get past the 401 auth gate to see it.
     """
     return f"{base}?start={lon1},{lat1}&end={lon2},{lat2}"
+
+
+def _brouter_directions_url(
+    base: str, lon1: float, lat1: float, lon2: float, lat2: float
+) -> str:
+    """BRouter's documented GET: pipe-separated lonlat pairs, GeoJSON out.
+
+    ``trekking`` is the profile this public server has installed for
+    non-motorised travel (``hiking`` and ``fast`` answer 500), and the app
+    converts the returned metres to minutes itself, so the profile only has
+    to keep the route on walkable ways.
+    """
+    return (
+        f"{base}?lonlats={lon1},{lat1}|{lon2},{lat2}"
+        "&profile=trekking&alternativeidx=0&format=geojson"
+    )
 
 
 def _ors_answers(base: str) -> bool:
@@ -168,12 +202,29 @@ def _ors_answers(base: str) -> bool:
         return False
 
 
+def _brouter_outcome(base: str) -> dict[str, Any]:
+    """Probe BRouter with a real tiny walk over GET, demanding GeoJSON back.
+
+    Last in the pick order, so this community server only ever sees probe
+    traffic once every other backend has already failed.
+    """
+    lon1, lat1, lon2, lat2 = _PROBE_WALK
+    return _probe_outcome(
+        "brouter",
+        base,
+        _brouter_directions_url(base, lon1, lat1, lon2, lat2),
+        headers={"User-Agent": config.USER_AGENT},
+        body_check=_brouter_has_route,
+    )
+
+
 def _probe_outcome(
     kind: str,
     route_url: str,
     probe_url: str,
     headers: dict[str, str] | None = None,
     post_json: dict[str, Any] | None = None,
+    body_check: Any = None,
 ) -> dict[str, Any]:
     """One live probe with its latency and failure reason.
 
@@ -181,7 +232,8 @@ def _probe_outcome(
     this, so the reported verdict and the router actually used can never
     drift apart. With ``post_json`` the probe is a real route POST -
     Valhalla's answer to that, not its status page, is what being pickable
-    means.
+    means - and ``body_check`` additionally parses a 200's body, since a
+    captive portal answering 200 with HTML is not a working router.
     """
     started = time.monotonic()
     try:
@@ -194,16 +246,13 @@ def _probe_outcome(
             response = httpx.get(probe_url, **kwargs)
         latency_ms = round((time.monotonic() - started) * 1000)
         ok = 200 <= response.status_code < 300
-        if ok and post_json is not None:
-            # A 200 must carry a route: an interposed portal or proxy page
-            # would otherwise count as healthy, win the pick, and then fail
-            # every real routing call for the whole cache TTL.
+        if ok and body_check is not None:
             try:
                 body = response.json()
             except Exception:  # noqa: BLE001
                 ok = False
             else:
-                ok = isinstance(body, dict) and "trip" in body
+                ok = bool(body_check(body))
         return {
             "kind": kind,
             "route_url": route_url,
@@ -245,6 +294,7 @@ def routing_status() -> dict[str, Any]:
             base,
             headers=_valhalla_headers(),
             post_json=_valhalla_probe_payload(),
+            body_check=_valhalla_has_route,
         )
         for base in config.VALHALLA_URLS
     ]
@@ -274,12 +324,13 @@ def routing_status() -> dict[str, Any]:
                 "error": "OPENROUTESERVICE_API_KEY is not set",
             }
         )
+    candidates.append(_brouter_outcome(config.BROUTER_URL))
 
     return {
         "key_configured": bool(key),
         "key_length": len(key),
         # Same order as _pick_router: first Valhalla host that answers, else
-        # ORS only when every Valhalla host failed.
+        # ORS when its key is set and it answers, else BRouter.
         "would_pick": next((c["route_url"] for c in candidates if c["ok"]), None),
         "cached": {
             "router": _ROUTER_CACHE,
@@ -299,8 +350,9 @@ def _pick_router() -> str | None:
     (probed with a tiny real ``POST /route`` - its ``/status`` answers while
     routes are refused, which would pin every stop to estimates), then
     OpenRouteService when an ``OPENROUTESERVICE_API_KEY`` is configured
-    (probed with a minimal directions request). The first that answers is
-    used for the whole request.
+    (probed with a minimal directions request), then the keyless BRouter
+    community server (probed with the same tiny walk, GeoJSON body
+    required). The first that answers is used for the whole request.
 
     Probing costs a few seconds and was previously repeated for every stop,
     which turned a routing outage into a multi-minute request. Caching the
@@ -322,6 +374,7 @@ def _pick_router() -> str | None:
             base,
             headers=_valhalla_headers(),
             post_json=_valhalla_probe_payload(),
+            body_check=_valhalla_has_route,
         )
         if outcome["ok"]:
             found = base
@@ -329,22 +382,58 @@ def _pick_router() -> str | None:
     if found is None and config.ors_api_key():
         if _ors_answers(config.OPENROUTESERVICE_URL):
             found = config.OPENROUTESERVICE_URL
+    if found is None and _brouter_outcome(config.BROUTER_URL)["ok"]:
+        found = config.BROUTER_URL
 
     _ROUTER_CACHE = found
     _ROUTER_CHECKED_AT = now
     return found
 
 
-def _is_ors(base: str) -> bool:
-    """OpenRouteService answers on a different wire protocol than Valhalla.
+def _backend(base: str) -> str:
+    """Which wire protocol the picked URL speaks.
 
-    Valhalla POSTs a JSON costings payload and reports kilometres; ORS GETs
-    start/end query params and reports metres in GeoJSON. The picked
-    backend's URL tells the caller which shape to speak, so tests can stub a
-    router with a bare string and the routing layer still dispatches
+    Valhalla POSTs a JSON costings payload and reports kilometres; ORS and
+    BRouter GET query params and answer GeoJSON with metres. The picked
+    backend's URL tells the caller which shape to speak, so tests can stub
+    a router with a bare string and the routing layer still dispatches
     correctly.
     """
-    return base.startswith(config.OPENROUTESERVICE_URL)
+    if base.startswith(config.OPENROUTESERVICE_URL):
+        return "ors"
+    if base.startswith(config.BROUTER_URL):
+        return "brouter"
+    return "valhalla"
+
+
+def _decode_polyline6(shape: str) -> list[list[float]]:
+    """Google's encoded polyline at 1e-6 precision, into [lon, lat] pairs.
+
+    Valhalla answers routes with this encoding under ``trip.legs[].shape``.
+    Points are rounded to 5 decimals (~1 m) - finer precision is noise on
+    the wire, and it is what the ORS geometry already uses.
+    """
+    coords: list[list[float]] = []
+    index = lat = lon = 0
+    while index < len(shape):
+        for axis in range(2):
+            result = shift = 0
+            while True:
+                if index >= len(shape):
+                    raise ValueError("truncated polyline")
+                char = ord(shape[index]) - 63
+                index += 1
+                result |= (char & 0x1F) << shift
+                shift += 5
+                if char < 0x20:
+                    break
+            delta = ~(result >> 1) if result & 1 else (result >> 1)
+            if axis == 0:
+                lat += delta
+            else:
+                lon += delta
+        coords.append([round(lon / 1e6, 5), round(lat / 1e6, 5)])
+    return coords
 
 
 async def _valhalla_walk_m(
@@ -352,8 +441,14 @@ async def _valhalla_walk_m(
     router: str,
     origin: tuple[float, float],
     stop: dict[str, Any],
-) -> float:
-    """Pedestrian metres from a Valhalla POST /route (kilometres on the wire)."""
+) -> tuple[float, list[list[float]] | None]:
+    """Pedestrian metres plus path geometry from a Valhalla POST /route.
+
+    Kilometres on the wire; the drawable path comes back as an encoded
+    polyline6 per leg, decoded here into the same [lon, lat] shape ORS
+    sends. A shape that will not decode costs only the line, never the
+    distance - the walk time is still exact.
+    """
     payload = {
         "locations": [
             {"lat": origin[0], "lon": origin[1]},
@@ -369,7 +464,18 @@ async def _valhalla_walk_m(
     meters = data["trip"]["summary"]["length"] * 1000.0
     if not meters:
         raise ValueError("valhalla returned a zero-length route")
-    return float(meters)
+
+    points: list[list[float]] = []
+    try:
+        for leg in data["trip"].get("legs") or []:
+            shape = leg.get("shape")
+            if shape:
+                points.extend(_decode_polyline6(shape))
+    except (ValueError, IndexError, TypeError, AttributeError):
+        points = []
+    deduped = [p for i, p in enumerate(points) if i == 0 or p != points[i - 1]]
+    geometry = deduped if len(deduped) >= 2 else None
+    return float(meters), geometry
 
 
 async def _ors_walk_m(
@@ -406,6 +512,39 @@ async def _ors_walk_m(
     return float(meters), geometry
 
 
+async def _brouter_walk_m(
+    client: httpx.AsyncClient,
+    origin: tuple[float, float],
+    stop: dict[str, Any],
+) -> tuple[float, list[list[float]] | None]:
+    """Pedestrian metres plus path geometry from BRouter's GeoJSON answer.
+
+    The metre count rides in ``properties.track-length`` as a string and the
+    drawn path under ``geometry.coordinates`` as full-precision [lon, lat]
+    pairs, rounded to 5 decimals exactly like the ORS geometry.
+    """
+    lon1, lat1 = origin[1], origin[0]
+    lon2, lat2 = stop["lon"], stop["lat"]
+    r = await client.get(
+        _brouter_directions_url(config.BROUTER_URL, lon1, lat1, lon2, lat2),
+        headers={"User-Agent": config.USER_AGENT},
+        timeout=25,
+    )
+    r.raise_for_status()
+    data = r.json()
+    features = data.get("features") or []
+    meters = float(features[0]["properties"]["track-length"])
+    if not meters:
+        raise ValueError("brouter returned a zero-length route")
+    coords = (features[0].get("geometry") or {}).get("coordinates") or None
+    geometry = (
+        [[round(float(lon), 5), round(float(lat), 5)] for lon, lat in coords]
+        if coords
+        else None
+    )
+    return meters, geometry
+
+
 async def walking_distances(
     origin: tuple[float, float], stops: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -417,6 +556,7 @@ async def walking_distances(
     """
     semaphore = asyncio.Semaphore(6)
     router = await asyncio.to_thread(_pick_router)
+    backend = _backend(router) if router else None
 
     async def one(client: httpx.AsyncClient, stop: dict[str, Any]) -> dict[str, Any]:
         straight = haversine_m(origin[0], origin[1], stop["lat"], stop["lon"])
@@ -424,8 +564,8 @@ async def walking_distances(
             "stop": stop,
             "walk_m": straight * ESTIMATE_DETOUR_FACTOR,
             "is_estimate": True,
-            # Only ORS returns a drawable path; estimates and Valhalla have
-            # none, and the map simply draws no line for those stops.
+            # Estimates carry no path, so the map draws no line for them;
+            # every routed backend answers with drawable geometry instead.
             "geometry": None,
         }
 
@@ -436,11 +576,12 @@ async def walking_distances(
 
         async with semaphore:
             try:
-                geometry: list[list[float]] | None = None
-                if _is_ors(router):
+                if backend == "ors":
                     meters, geometry = await _ors_walk_m(client, origin, stop)
+                elif backend == "brouter":
+                    meters, geometry = await _brouter_walk_m(client, origin, stop)
                 else:
-                    meters = await _valhalla_walk_m(client, router, origin, stop)
+                    meters, geometry = await _valhalla_walk_m(client, router, origin, stop)
                 if meters > 0:
                     return {
                         "stop": stop,

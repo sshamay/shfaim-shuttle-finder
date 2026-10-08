@@ -17,7 +17,14 @@ import pytest
 
 from app import config
 from scripts import find
-from tests.conftest import ors_response, valhalla_response, write_cache
+from tests.conftest import (
+    REAL_VALHALLA_SHAPE,
+    brouter_response,
+    ors_response,
+    polyline6_encode,
+    valhalla_response,
+    write_cache,
+)
 
 
 class TestHaversine:
@@ -217,10 +224,10 @@ class TestWalkingDistancesRouted:
         assert all(h["X-Client-Id"] == "shfaim-shuttle-finder" for h in sent)
         assert all(h["User-Agent"] == config.USER_AGENT for h in sent)
 
-    def test_valhalla_results_carry_no_geometry(
+    def test_valhalla_results_carry_drawable_geometry(
         self, stops_cache: Path, mocker
     ) -> None:
-        """Only ORS returns a drawable path; the map draws no line otherwise."""
+        """The decoded polyline6 reaches the results, same shape ORS sends."""
         mocker.patch.object(find, "_pick_router", lambda: "http://router/route")
         mocker.patch.object(
             find.httpx,
@@ -230,7 +237,242 @@ class TestWalkingDistancesRouted:
         results = find.asyncio.run(
             find.walking_distances((32.07, 34.79), find.load_stops())
         )
+        for r in results:
+            assert r["geometry"], "a drawable path is needed for the map"
+            assert len(r["geometry"]) >= 2
+            assert all(len(p) == 2 for p in r["geometry"])
+
+    def test_valhalla_without_a_shape_still_reports_the_distance(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """A route that will not draw costs only the line, never the time."""
+        mocker.patch.object(find, "_pick_router", lambda: "http://router/route")
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeClient(
+                lambda r: _FakeResponse(valhalla_response(0.4, shape=None))
+            ),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert all(not r["is_estimate"] for r in results)
+        assert all(r["walk_m"] == pytest.approx(400.0) for r in results)
         assert all(r["geometry"] is None for r in results)
+
+    def test_a_broken_shape_is_ignored_not_fatal(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """Truncated polyline data must degrade to no line, not to estimates."""
+        mocker.patch.object(find, "_pick_router", lambda: "http://router/route")
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeClient(
+                lambda r: _FakeResponse(valhalla_response(0.4, shape="_"))
+            ),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert all(not r["is_estimate"] for r in results)
+        assert all(r["geometry"] is None for r in results)
+
+
+class TestPolyline6:
+    """Valhalla's encoded-polyline geometry, as captured from the real thing."""
+
+    def test_real_shape_decodes_inside_its_reported_bbox(self) -> None:
+        """A real 297 m probe walk: 17 points, all within Valhalla's summary bbox."""
+        points = find._decode_polyline6(REAL_VALHALLA_SHAPE)
+        assert len(points) == 17
+        lons = [p[0] for p in points]
+        lats = [p[1] for p in points]
+        assert 34.78806 <= min(lons) <= max(lons) <= 34.78943
+        assert 32.07039 <= min(lats) <= max(lats) <= 32.07199
+
+    def test_points_run_from_the_walk_start_towards_its_end(self) -> None:
+        points = find._decode_polyline6(REAL_VALHALLA_SHAPE)
+        assert points[0] == [34.78807, 32.071]
+        assert points[-1][0] > points[0][0], "the walk heads east"
+        assert points[-1][1] > points[0][1], "the walk heads north"
+
+    def test_points_are_rounded_to_five_decimals(self) -> None:
+        for lon, lat in find._decode_polyline6(REAL_VALHALLA_SHAPE):
+            assert round(lon, 5) == lon
+            assert round(lat, 5) == lat
+
+    def test_roundtrip_through_the_encoder(self) -> None:
+        """Encoder and decoder are inverses at 5-decimal precision."""
+        original = [[34.7920, 32.0747], [34.7935, 32.0760], [34.7952, 32.0775]]
+        assert find._decode_polyline6(polyline6_encode(original)) == original
+
+    def test_reencoding_the_decoded_real_shape_stays_stable(self) -> None:
+        points = find._decode_polyline6(REAL_VALHALLA_SHAPE)
+        assert find._decode_polyline6(polyline6_encode(points)) == points
+
+    def test_empty_shape_is_no_points(self) -> None:
+        assert find._decode_polyline6("") == []
+
+    def test_a_truncated_shape_raises_instead_of_guessing(self) -> None:
+        with pytest.raises(ValueError, match="truncated"):
+            find._decode_polyline6("_")
+
+
+class TestWalkingDistancesBrouter:
+    """The BRouter backend: the keyless last resort, picked when all else fails."""
+
+    def _patch_brouter(self, mocker) -> None:
+        mocker.patch.object(
+            find, "_pick_router", lambda: find.config.BROUTER_URL
+        )
+
+    def test_uses_brouter_distance_when_selected(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        self._patch_brouter(mocker)
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(
+                lambda r: _FakeGetResponse(brouter_response(610.0))
+            ),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert len(results) == 3
+        assert all(not r["is_estimate"] for r in results)
+        assert all(r["walk_m"] == pytest.approx(610.0) for r in results)
+
+    def test_brouter_url_is_the_documented_geojson_get(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        self._patch_brouter(mocker)
+        sent: list[dict] = []
+
+        def handler(request):
+            sent.append(request)
+            return _FakeGetResponse(brouter_response(300.0))
+
+        mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeGetClient(handler))
+        find.asyncio.run(find.walking_distances((32.07, 34.79), find.load_stops()))
+
+        assert sent, "expected at least one request"
+        url = sent[0]["url"]
+        assert url.startswith(find.config.BROUTER_URL + "?")
+        assert "lonlats=" in url
+        assert "profile=trekking" in url
+        assert "format=geojson" in url
+        # One request per stop destination, each with the origin fixed.
+        assert len(sent) == len(find.load_stops())
+
+    def test_brouter_requests_identify_the_client(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """A community server deserves a real User-Agent on every request."""
+        self._patch_brouter(mocker)
+        sent: list[dict] = []
+
+        def handler(request):
+            sent.append(request)
+            return _FakeGetResponse(brouter_response(300.0))
+
+        mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeGetClient(handler))
+        find.asyncio.run(find.walking_distances((32.07, 34.79), find.load_stops()))
+
+        assert all(h["headers"]["User-Agent"] == config.USER_AGENT for h in sent)
+
+    def test_brouter_results_carry_drawable_walk_geometry(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """The GeoJSON path is what the map draws; it must reach the results."""
+        self._patch_brouter(mocker)
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(
+                lambda r: _FakeGetResponse(brouter_response(492.0))
+            ),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        expected = [[34.792, 32.0747], [34.7935, 32.076], [34.7952, 32.0775]]
+        assert all(r["geometry"] == expected for r in results)
+
+    def test_brouter_geometry_coordinates_are_rounded_to_five_decimals(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        self._patch_brouter(mocker)
+        payload = brouter_response(
+            400.0, coordinates=[[34.7912345678, 32.0747123456]]
+        )
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(lambda r: _FakeGetResponse(payload)),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert all(r["geometry"] == [[34.79123, 32.07471]] for r in results)
+
+    def test_zero_length_brouter_route_is_rejected(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        self._patch_brouter(mocker)
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(
+                lambda r: _FakeGetResponse(brouter_response(0.0))
+            ),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert all(r["is_estimate"] for r in results)
+
+    def test_mixed_failures_fall_back_per_stop(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """A 500 and a malformed payload must not lose the batch."""
+        self._patch_brouter(mocker)
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _FakeGetResponse(None, status=500)
+            if calls["n"] == 2:
+                return _FakeGetResponse({"features": []})
+            return _FakeGetResponse(brouter_response(300.0))
+
+        mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeGetClient(handler))
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert len(results) == 3
+        assert sum(1 for r in results if r["is_estimate"]) == 2
+        assert sum(1 for r in results if not r["is_estimate"]) == 1
+
+    def test_find_nearest_keeps_the_brouter_geometry(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """The ranking must not drop the walk path the map draws from."""
+        self._patch_brouter(mocker)
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(
+                lambda r: _FakeGetResponse(brouter_response(492.0))
+            ),
+        )
+        result = find.find_nearest(32.0747, 34.7920)
+        for stop in result["stops"]:
+            assert stop["geometry"], "every ranked stop keeps its walk path"
 
 
 class TestWalkingDistancesOrs:
@@ -790,6 +1032,11 @@ class TestRouterPick:
             "post",
             lambda url, json=None, **kwargs: _FakeSyncResponse(503),
         )
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(503),
+        )
         assert find._pick_router() is None
 
     def test_returns_none_when_all_hosts_raise(self, mocker) -> None:
@@ -797,6 +1044,7 @@ class TestRouterPick:
             raise find.httpx.ConnectError("refused")
 
         mocker.patch.object(find.httpx, "post", boom)
+        mocker.patch.object(find.httpx, "get", boom)
         assert find._pick_router() is None
 
     def test_a_200_without_a_route_counts_as_down(self, mocker) -> None:
@@ -812,6 +1060,11 @@ class TestRouterPick:
             lambda url, json=None, **kwargs: _FakeSyncResponse(
                 200, json_body={"html": "captive portal"}
             ),
+        )
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(503),
         )
         assert find._pick_router() is None
 
@@ -924,6 +1177,91 @@ class TestRouterPickOrs:
         assert ";" not in sent_url["url"]
 
 
+class TestRouterPickBrouter:
+    """BRouter is the keyless last resort, probed only when all else fails."""
+
+    @staticmethod
+    def _fail_valhalla(mocker) -> None:
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(503),
+        )
+
+    def test_brouter_is_picked_when_everything_else_is_down(self, mocker) -> None:
+        self._fail_valhalla(mocker)
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(
+                200, json_body=brouter_response(300.0)
+            ),
+        )
+        assert find._pick_router() == find.config.BROUTER_URL
+
+    def test_a_200_html_page_from_brouter_counts_as_down(self, mocker) -> None:
+        """The GeoJSON body must be there too, not just a 200 status."""
+        self._fail_valhalla(mocker)
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(
+                200, json_body={"html": "captive portal"}
+            ),
+        )
+        assert find._pick_router() is None
+
+    def test_the_probe_is_a_real_geojson_walk(self, mocker) -> None:
+        """The probe must exercise the real URL shape the routes will use."""
+        sent: dict = {}
+
+        def get(url, **kwargs):
+            sent["url"] = url
+            sent.update(kwargs)
+            return _FakeSyncResponse(200, json_body=brouter_response(300.0))
+
+        self._fail_valhalla(mocker)
+        mocker.patch.object(find.httpx, "get", get)
+        assert find._pick_router() == find.config.BROUTER_URL
+        assert sent["url"].startswith(find.config.BROUTER_URL + "?")
+        assert "lonlats=" in sent["url"] and "format=geojson" in sent["url"]
+        assert sent["headers"]["User-Agent"] == config.USER_AGENT
+
+    def test_brouter_is_never_touched_when_valhalla_answers(self, mocker) -> None:
+        """A community server deserves no traffic while anything else works."""
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(200),
+        )
+        gets = {"n": 0}
+
+        def get(url, **kwargs):
+            gets["n"] += 1
+            return _FakeSyncResponse(200, json_body=brouter_response(300.0))
+
+        mocker.patch.object(find.httpx, "get", get)
+        assert find._pick_router() == "http://localhost:8002/route"
+        assert gets["n"] == 0, "BRouter must not be probed when Valhalla works"
+
+    def test_ors_wins_over_brouter_when_both_answer(self, mocker) -> None:
+        """BRouter is strictly last: ORS with a key ranks above it."""
+        mocker.patch.object(find.config, "ors_api_key", lambda: "test-key")
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(503),
+        )
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(
+                200, json_body=brouter_response(300.0)
+            ),
+        )
+        assert find._pick_router() == find.config.OPENROUTESERVICE_URL
+
+
 class TestRouterCacheExpiry:
     def test_failure_cache_expires_so_a_restart_is_picked_up(
         self, mocker
@@ -981,9 +1319,11 @@ class TestRoutingStatus:
             assert posts[index] == base
             assert status["candidates"][index]["route_url"] == base
             assert status["candidates"][index]["probe_url"] == base
-        # ...and ORS comes last, probed only after Valhalla failed.
+        # ...then ORS, then BRouter - each after Valhalla failed.
         assert gets[0].startswith(config.OPENROUTESERVICE_URL)
-        assert status["candidates"][-1]["kind"] == "ors"
+        assert gets[1].startswith(config.BROUTER_URL)
+        kinds = [c["kind"] for c in status["candidates"]]
+        assert kinds == ["valhalla", "valhalla", "ors", "brouter"]
         assert status["would_pick"] == "https://valhalla1.openstreetmap.de/route"
         assert all(c["latency_ms"] >= 0 for c in status["candidates"])
         assert all(c["ok"] is (i == 1) for i, c in enumerate(status["candidates"]))
@@ -1008,21 +1348,26 @@ class TestRoutingStatus:
         assert status["key_configured"] is False
         assert status["key_length"] == 0
         assert len(posts) == len(config.VALHALLA_URLS), "each host gets a route probe"
-        assert gets == [], "ORS must not be probed"
-        ors = status["candidates"][-1]
+        assert all(not g.startswith(config.OPENROUTESERVICE_URL) for g in gets), (
+            "ORS must not be probed"
+        )
+        assert len(gets) == 1 and gets[0].startswith(config.BROUTER_URL), (
+            "only BRouter takes a GET probe without an ORS key"
+        )
+        ors = next(c for c in status["candidates"] if c["kind"] == "ors")
         assert ors["skipped"] is True
         assert "OPENROUTESERVICE_API_KEY" in ors["error"]
         assert status["would_pick"] is None
 
     def test_sends_the_key_but_never_reports_it(self, mocker) -> None:
         secret = "eyJhbGciOiJIUzI1NiJ9.secret-do-not-leak"
-        ors_kwargs: dict = {}
+        gets: list[tuple[str, dict]] = []
 
         def post(url, json=None, **kwargs):
             return _FakeSyncResponse(503)
 
         def get(url, **kwargs):
-            ors_kwargs.update(kwargs)
+            gets.append((url, kwargs))
             return _FakeSyncResponse(403, text='{"error": "Access disallowed"}')
 
         mocker.patch.object(find.httpx, "post", post)
@@ -1033,10 +1378,16 @@ class TestRoutingStatus:
 
         wire = json.dumps(status)
         assert secret not in wire, "the API key must never reach the browser"
-        # The key did go out on the probe request itself...
-        assert ors_kwargs["headers"]["Authorization"] == secret
+        # The key did go out on ORS's probe request itself...
+        authorized = [
+            kwargs
+            for _, kwargs in gets
+            if kwargs.get("headers", {}).get("Authorization")
+        ]
+        assert authorized, "the ORS probe must carry the key"
+        assert authorized[0]["headers"]["Authorization"] == secret
         # ...while the browser sees the rejection body ORS returned.
-        ors = status["candidates"][-1]
+        ors = next(c for c in status["candidates"] if c["kind"] == "ors")
         assert ors["ok"] is False
         assert ors["http_status"] == 403
         assert "Access disallowed" in ors["error"]

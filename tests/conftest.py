@@ -356,9 +356,80 @@ def routed_600m(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(find.httpx, "AsyncClient", _Client)
 
 
-def valhalla_response(length_km: float) -> dict[str, Any]:
-    """A minimal Valhalla /route success payload."""
-    return {"trip": {"summary": {"length": length_km}}}
+# A real pedestrian polyline6 captured from the local container (the 297 m
+# probe walk). Decoded, it spans lon 34.78807..34.78942, lat 32.07039..32.07198.
+REAL_VALHALLA_SHAPE = (
+    "otmd|@kmhjaA|XFhG[tBLCuBMqBa@kC_@gBk@_AwDaDeCwBaTmSgQgN}NcIcCwAkXcIQhA"
+)
+
+
+def valhalla_response(
+    length_km: float, shape: str | None = REAL_VALHALLA_SHAPE
+) -> dict[str, Any]:
+    """A minimal Valhalla /route success payload.
+
+    ``shape`` defaults to a real pedestrian polyline6 captured from the
+    local container (the 297 m probe walk), so tests exercise the same
+    decoding the app does. Pass ``shape=None`` for the degenerate answer
+    with no geometry at all.
+    """
+    trip: dict[str, Any] = {"summary": {"length": length_km}}
+    if shape is not None:
+        trip["legs"] = [{"shape": shape}]
+    return {"trip": trip}
+
+
+def polyline6_encode(coords: list[list[float]]) -> str:
+    """Google's encoded polyline at 1e-6 precision - the inverse of the
+    decoder under test, used to build shapes that follow a request."""
+
+    def value(delta: int) -> str:
+        delta = ~(delta << 1) if delta < 0 else (delta << 1)
+        out = []
+        while delta >= 0x20:
+            out.append((0x20 | (delta & 0x1F)) + 63)
+            delta >>= 5
+        out.append(delta + 63)
+        return "".join(chr(c) for c in out)
+
+    prev_lat = prev_lon = 0
+    parts: list[str] = []
+    for lon, lat in coords:
+        ilat, ilon = round(lat * 1e6), round(lon * 1e6)
+        parts.append(value(ilat - prev_lat))
+        parts.append(value(ilon - prev_lon))
+        prev_lat, prev_lon = ilat, ilon
+    return "".join(parts)
+
+
+def brouter_response(
+    distance_m: float, coordinates: list[list[float]] | None = None
+) -> dict[str, Any]:
+    """A minimal BRouter GeoJSON answer (metres under ``track-length``, a
+    string on the wire, and the drawable path under ``geometry.coordinates``)."""
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "creator": "BRouter-1.7.10",
+                    "track-length": str(int(distance_m)),
+                    "total-time": "60",
+                },
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": coordinates
+                    if coordinates is not None
+                    else [
+                        [34.7920, 32.0747],
+                        [34.7935, 32.0760],
+                        [34.7952, 32.0775],
+                    ],
+                },
+            }
+        ],
+    }
 
 
 def ors_response(distance_m: float) -> dict[str, Any]:

@@ -7,11 +7,11 @@ non-local request (tile images, etc.) so nothing ever leaves the machine. No
 ``RUN_LIVE`` flag is needed, and the pytest socket guard in ``tests/conftest.py``
 keeps quiet because no outgoing socket is opened by the Python process.
 
-Routing is covered three ways. The default ``app_url`` stubs the router probe
+Routing is covered four ways. The default ``app_url`` stubs the router probe
 out, exercising the degraded estimates path the banner warns about. The
-``app_url_valhalla`` and ``app_url_ors`` variants point the app at local
-look-alikes of the two real backends, so the full probe-then-route chain runs
-against a real HTTP server for each without any network.
+``app_url_valhalla``, ``app_url_ors`` and ``app_url_brouter`` variants point the
+app at local look-alikes of the three real backends, so the full probe-then-route
+chain runs against a real HTTP server for each without any network.
 """
 
 from __future__ import annotations
@@ -28,7 +28,13 @@ import uvicorn
 
 from app import config, geocode
 from scripts import find
-from tests.conftest import SAMPLE_LINES, ors_response, valhalla_response
+from tests.conftest import (
+    SAMPLE_LINES,
+    brouter_response,
+    ors_response,
+    polyline6_encode,
+    valhalla_response,
+)
 
 
 def _candidate(
@@ -145,23 +151,26 @@ def _serve(
     *,
     valhalla_at: str | None = None,
     ors_at: str | None = None,
+    brouter_at: str | None = None,
 ) -> Iterator[str]:
     """Start the real FastAPI app on a free localhost port with geocode stubbed.
 
-    Router selection mirrors the three live states:
-    - neither backend configured: the probe is stubbed out entirely, so every
+    Router selection mirrors the live states:
+    - no backend configured: the probe is stubbed out entirely, so every
       walk time is an estimate (the degraded path the banner warns about);
     - ``valhalla_at``: VALHALLA_URLS is pointed at the fake host;
     - ``ors_at``: VALHALLA_URLS is a dead port and ORS is pointed at the fake
       host with a test API key, so the app must reach ORS through the real
-      probe-selection code.
+      probe-selection code;
+    - ``brouter_at``: Valhalla is dead and ORS has no key, so the chain falls
+      through to BRouter, which has no key at all.
     """
     from app.web import app as fastapi_app
 
     monkeypatch.setattr(config, "STOPS_CACHE", _stubs_cache(tmp_path))
     monkeypatch.setattr(geocode, "search", _fake_search)
 
-    if valhalla_at is None and ors_at is None:
+    if valhalla_at is None and ors_at is None and brouter_at is None:
         monkeypatch.setattr(find, "_pick_router", lambda: None)
     if valhalla_at is not None:
         monkeypatch.setattr(config, "VALHALLA_URLS", [valhalla_at])
@@ -169,6 +178,9 @@ def _serve(
         monkeypatch.setattr(config, "VALHALLA_URLS", ["http://127.0.0.1:1/route"])
         monkeypatch.setattr(config, "OPENROUTESERVICE_URL", ors_at)
         monkeypatch.setattr(config, "ors_api_key", lambda: "e2e-test-key")
+    if brouter_at is not None:
+        monkeypatch.setattr(config, "VALHALLA_URLS", ["http://127.0.0.1:1/route"])
+        monkeypatch.setattr(config, "BROUTER_URL", brouter_at)
 
     server = uvicorn.Server(
         uvicorn.Config(fastapi_app, host="127.0.0.1", port=0, log_level="warning")
@@ -209,6 +221,14 @@ def app_url_ors(
 ) -> Iterator[str]:
     """The app pointing at a reachable ORS look-alike, Valhalla dead."""
     yield from _serve(monkeypatch, tmp_path, ors_at=local_ors)
+
+
+@pytest.fixture
+def app_url_brouter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, local_brouter: str
+) -> Iterator[str]:
+    """The app falling through to BRouter: Valhalla dead, ORS keyless."""
+    yield from _serve(monkeypatch, tmp_path, brouter_at=local_brouter)
 
 
 def _fake_router_server(
@@ -273,18 +293,56 @@ def _ors_walk_between(request: str) -> dict[str, Any]:
     return payload
 
 
+def _valhalla_walk_between(request_body: str) -> dict[str, Any]:
+    """A Valhalla look-alike: the route body names start/end; return geometry."""
+    try:
+        data = json.loads(request_body) if request_body else {}
+    except json.JSONDecodeError:
+        data = {}
+    points = data.get("locations", [])
+    if len(points) >= 2:
+        s = points[0].get("lon"), points[0].get("lat")
+        e = points[1].get("lon"), points[1].get("lat")
+    else:
+        # fallback
+        s = (34.824959, 32.117517)
+        e = (34.8240, 32.1147)
+    # create a tiny path from start to end
+    # shape must be polyline6; encode a three-point shape
+    mid = ((s[0] + e[0]) / 2 + 0.0004, (s[1] + e[1]) / 2 - 0.0003)
+    return valhalla_response(0.556, shape=polyline6_encode([s, mid, e]))
+
+
+def _brouter_walk_between(request: str) -> dict[str, Any]:
+    """BRouter GeoJSON: lonlats=lon1,lat1|lon2,lat2 tracks the query."""
+    params = urllib.parse.parse_qs(urllib.parse.urlparse(request).query)
+    lonlats = params.get("lonlats", ["0,0|0,0"])[0]
+    a, b = lonlats.split("|")
+    slon, slat = a.split(",")
+    elon, elat = b.split(",")
+    s = (float(slon), float(slat))
+    e = (float(elon), float(elat))
+    mid = ((s[0] + e[0]) / 2 + 0.0004, (s[1] + e[1]) / 2 - 0.0003)
+    payload = brouter_response(492.0, coordinates=[s, mid, e])
+    return payload
+
+
 @pytest.fixture
 def local_valhalla() -> Iterator[str]:
-    """A Valhalla-shaped fake serving a 556 m walk (~7 min) for every stop."""
-    yield from _fake_router_server(
-        endpoint="/route", payload=lambda _request: valhalla_response(0.556)
-    )
+    """A Valhalla-shaped fake serving a geometry that matches each stop."""
+    yield from _fake_router_server(endpoint="/route", payload=_valhalla_walk_between)
 
 
 @pytest.fixture
 def local_ors() -> Iterator[str]:
-    """An ORS-shaped fake serving a 492 m walk (~6 min) for every destination."""
+    """An ORS-shaped fake serving a walk that matches each destination."""
     yield from _fake_router_server(endpoint="", payload=_ors_walk_between)
+
+
+@pytest.fixture
+def local_brouter() -> Iterator[str]:
+    """A BRouter-shaped fake serving GeoJSON geometry for every destination."""
+    yield from _fake_router_server(endpoint="", payload=_brouter_walk_between)
 
 
 def _page_for(base_url: str) -> Iterator:
@@ -336,3 +394,9 @@ def page_valhalla(app_url_valhalla: str):
 def page_ors(app_url_ors: str):
     """Browser against the app backed by the local ORS look-alike."""
     yield from _page_for(app_url_ors)
+
+
+@pytest.fixture
+def page_brouter(app_url_brouter: str):
+    """Browser against the app falling back to the local BRouter look-alike."""
+    yield from _page_for(app_url_brouter)

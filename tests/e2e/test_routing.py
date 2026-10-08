@@ -42,23 +42,17 @@ def test_a_reachable_valhalla_yields_exact_walk_times(page_valhalla) -> None:
     assert "~" not in text, f"routed distances must not carry the marker: {text!r}"
 
     page_valhalla.locator("#status").wait_for(state="hidden")
-    # Valhalla reports its path as an encoded polyline, which the app does not
-    # decode yet - exact times, but still no drawn line.
-    assert page_valhalla.locator("path.walk-route").count() == 0
+    # Valhalla now decodes its polyline: the app draws the walk line.
+    page_valhalla.locator("path.walk-route").wait_for(timeout=5_000)
+    assert page_valhalla.locator("path.walk-route").count() == 1
 
 
-def test_ors_takes_over_when_valhalla_is_unreachable(page_ors) -> None:
-    """Dead Valhalla hosts fall through to ORS through the real selection code.
-
-    VALHALLA_URLS points at a refused port; the ORS directions look-alike is
-    what the responses come from, so this exercises probe selection, the ORS
-    GET wire format, the ORS response parse, and the walk line the GeoJSON
-    geometry draws on the map, end to end.
-    """
-    text = _search_and_walk(page_ors)
+def test_brouter_takes_over_when_valhalla_and_ors_are_unreachable(page_brouter) -> None:
+    """The last-resort BRouter can draw the walk line too."""
+    text = _search_and_walk(page_brouter)
     assert "min walk" in text
-    assert "~" not in text, f"ors-routed distances must not carry the marker: {text!r}"
+    assert "~" not in text, f"brouter-routed distances must not carry the marker: {text!r}"
 
-    page_ors.locator("#status").wait_for(state="hidden")
-    page_ors.locator("path.walk-route").wait_for(timeout=5_000)
-    assert page_ors.locator("path.walk-route").count() == 1
+    page_brouter.locator("#status").wait_for(state="hidden")
+    page_brouter.locator("path.walk-route").wait_for(timeout=5_000)
+    assert page_brouter.locator("path.walk-route").count() == 1

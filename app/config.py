@@ -30,10 +30,10 @@ USER_AGENT = "shfaim-shuttle-finder/1.0 (personal project)"
 CLIENT_ID = "shfaim-shuttle-finder"
 
 # Routing backends, tried in order: a local Valhalla container
-# (scripts/setup_routing.sh), a public Valhalla instance, then OpenRouteService
-# when OPENROUTESERVICE_API_KEY is set. VALHALLA_URL points at the first
-# candidate when set, so a deployment that cannot reach the public demos can
-# use a server of its own.
+# (scripts/setup_routing.sh), a public Valhalla instance, OpenRouteService
+# when OPENROUTESERVICE_API_KEY is set, and BRouter as the keyless last
+# resort. VALHALLA_URL points at the first candidate when set, so a
+# deployment that cannot reach the public demos can use a server of its own.
 DEFAULT_VALHALLA_URLS = [
     "http://localhost:8002/route",
     "https://valhalla1.openstreetmap.de/route",
@@ -45,6 +45,11 @@ DEFAULT_VALHALLA_URLS = [
 # returns real pedestrian distances, unlike the OSRM public demo which answers
 # every query as a drive.
 OPENROUTESERVICE_URL = "https://api.openrouteservice.org/v2/directions/foot-walking"
+
+# BRouter's public community server, probed last: keyless, no quota
+# published, and its GeoJSON answer carries a drawable path straight away.
+# It only ever sees traffic when every other backend is down.
+BROUTER_URL = "https://brouter.de/brouter"
 
 _valhalla_env = os.environ.get("VALHALLA_URL", "").strip()
 if _valhalla_env:

@@ -18,7 +18,13 @@ from fastapi.testclient import TestClient
 from app import config, geocode
 from app.web import app
 from scripts import find
-from tests.conftest import ors_response, photon_feature, photon_response, valhalla_response
+from tests.conftest import (
+    REAL_VALHALLA_SHAPE,
+    ors_response,
+    photon_feature,
+    photon_response,
+    valhalla_response,
+)
 
 
 @pytest.fixture
@@ -52,7 +58,11 @@ def _mock_photon(monkeypatch: pytest.MonkeyPatch, *features: dict) -> None:
     monkeypatch.setattr(geocode.httpx, "AsyncClient", _Client)
 
 
-def _mock_router(monkeypatch: pytest.MonkeyPatch, length_km: float = 0.402) -> None:
+def _mock_router(
+    monkeypatch: pytest.MonkeyPatch,
+    length_km: float = 0.402,
+    shape: str | None = REAL_VALHALLA_SHAPE,
+) -> None:
     monkeypatch.setattr(find, "_pick_router", lambda: "http://router/route")
 
     class _Resp:
@@ -62,7 +72,7 @@ def _mock_router(monkeypatch: pytest.MonkeyPatch, length_km: float = 0.402) -> N
             return None
 
         def json(self) -> dict:
-            return valhalla_response(length_km)
+            return valhalla_response(length_km, shape)
 
     class _Client:
         def __init__(self, *a, **k) -> None:
@@ -81,7 +91,7 @@ def _mock_router(monkeypatch: pytest.MonkeyPatch, length_km: float = 0.402) -> N
 
 
 def _mock_ors(monkeypatch: pytest.MonkeyPatch, distance_m: float = 402.0) -> None:
-    """Back the app with an ORS-shaped GET, the only backend that draws walks."""
+    """Back the app with an ORS-shaped GET, one of the walk-drawing backends."""
     monkeypatch.setattr(find, "_pick_router", lambda: find.config.OPENROUTESERVICE_URL)
     monkeypatch.setattr(config, "ors_api_key", lambda: "test-key")
 
@@ -274,14 +284,26 @@ class TestNearestEndpoint:
         for entry in body["lines"]:
             assert entry["stop"]["geometry"] is None
 
-    def test_non_ors_results_carry_no_geometry(
+    def test_valhalla_results_carry_walk_geometry(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Valhalla returns an encoded polyline we do not decode: no line drawn."""
+        """The decoded polyline6 rides the same way ORS geometry does."""
         _mock_router(monkeypatch)
         body = client.get("/api/nearest", params={"lat": 32.0747, "lon": 34.7920}).json()
+        geometry = body["best_stop"]["geometry"]
+        assert geometry and len(geometry) >= 2, "a drawable path is needed"
+        for stop in body["stops"]:
+            assert stop["geometry"] == geometry, "every stop draws its own walk"
+
+    def test_valhalla_without_a_shape_still_reports_distances(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A route that will not draw costs only the line, never the time."""
+        _mock_router(monkeypatch, length_km=0.402, shape=None)
+        body = client.get("/api/nearest", params={"lat": 32.0747, "lon": 34.7920}).json()
+        assert body["routing_available"] is True
+        assert body["best_stop"]["is_estimate"] is False
         assert all(stop["geometry"] is None for stop in body["stops"])
-        assert body["best_stop"]["geometry"] is None
 
     def test_line_entries_include_route_name(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -640,7 +662,8 @@ class TestRoutingStatusEndpoint:
 
             return _Resp()
 
-        # Valhalla candidates probe with POST (a real route), ORS with GET.
+        # Valhalla candidates probe with POST (a real route); ORS and BRouter
+        # probe with GET.
         monkeypatch.setattr(find.httpx, "get", _get)
         monkeypatch.setattr(find.httpx, "post", _get)
         return calls
@@ -655,11 +678,18 @@ class TestRoutingStatusEndpoint:
         assert response.status_code == 200
         body = response.json()
         assert body["key_configured"] is False
-        assert [c["kind"] for c in body["candidates"]] == ["valhalla", "valhalla", "ors"]
+        assert [c["kind"] for c in body["candidates"]] == [
+            "valhalla",
+            "valhalla",
+            "ors",
+            "brouter",
+        ]
         assert body["candidates"][0]["http_status"] == 503
         assert "backend unhappy" in body["candidates"][0]["error"]
-        assert body["candidates"][-1]["skipped"] is True
-        assert "OPENROUTESERVICE_API_KEY" in body["candidates"][-1]["error"]
+        ors = body["candidates"][2]
+        assert ors["skipped"] is True
+        assert "OPENROUTESERVICE_API_KEY" in ors["error"]
+        assert body["candidates"][-1]["kind"] == "brouter"
         assert body["would_pick"] is None
         assert "router" in body["cached"]
 
@@ -676,12 +706,17 @@ class TestRoutingStatusEndpoint:
         body = response.json()
         assert body["key_configured"] is True
         assert body["key_length"] == len("integration-secret-key-9")
-        ors = body["candidates"][-1]
+        ors = body["candidates"][2]
         assert ors["kind"] == "ors"
         assert ors["ok"] is False
         assert ors["http_status"] == 403
-        # The key did go out on the probe request itself.
-        assert calls[-1][1]["headers"]["Authorization"] == "integration-secret-key-9"
+        # The key did go out on the ORS probe itself (BRouter's probe, which
+        # runs after it, deliberately carries no key).
+        authorized = [
+            kwargs for _, kwargs in calls if kwargs.get("headers", {}).get("Authorization")
+        ]
+        assert authorized, "the ORS probe must carry the key"
+        assert authorized[0]["headers"]["Authorization"] == "integration-secret-key-9"
 
 
 class TestUserJourney:
