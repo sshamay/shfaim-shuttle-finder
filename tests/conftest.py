@@ -86,9 +86,11 @@ def _isolate_router_cache() -> None:
 
     find._ROUTER_CACHE = None
     find._ROUTER_CHECKED_AT = 0.0
+    find._BROUTER_DOWN_UNTIL = 0.0
     yield
     find._ROUTER_CACHE = None
     find._ROUTER_CHECKED_AT = 0.0
+    find._BROUTER_DOWN_UNTIL = 0.0
 
 
 @pytest.fixture(autouse=True)

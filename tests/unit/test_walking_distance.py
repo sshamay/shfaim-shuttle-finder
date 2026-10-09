@@ -474,6 +474,83 @@ class TestWalkingDistancesBrouter:
         for stop in result["stops"]:
             assert stop["geometry"], "every ranked stop keeps its walk path"
 
+    def test_a_rate_limited_stop_cools_brouter_down_for_the_rest(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """One 403 must stop the whole sweep: more calls only extend the block."""
+        self._patch_brouter(mocker)
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            return _FakeGetResponse(
+                brouter_response(0.0), status=403, headers={"Retry-After": "30"}
+            )
+
+        mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeGetClient(handler))
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+
+        assert all(r["is_estimate"] for r in results)
+        assert calls["n"] == 1, "a throttled BRouter must not be asked again"
+        assert find._brouter_cooling_down()
+
+    def test_retry_after_is_honoured(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """The server's own wait wins when it is longer than the default."""
+        self._patch_brouter(mocker)
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(
+                lambda r: _FakeGetResponse(
+                    brouter_response(0.0), status=403, headers={"Retry-After": "120"}
+                )
+            ),
+        )
+        before = find.time.monotonic()
+        find.asyncio.run(find.walking_distances((32.07, 34.79), find.load_stops()))
+        assert find._BROUTER_DOWN_UNTIL >= before + 120
+
+    def test_a_cooling_brouter_is_not_touched(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """No HTTP at all while the cooldown is running."""
+        self._patch_brouter(mocker)
+        find._BROUTER_DOWN_UNTIL = find.time.monotonic() + 60
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            return _FakeGetResponse(brouter_response(300.0))
+
+        mocker.patch.object(find.httpx, "AsyncClient", return_value=_FakeGetClient(handler))
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert calls["n"] == 0
+        assert all(r["is_estimate"] for r in results)
+
+    def test_brouter_requests_run_one_at_a_time(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """Parallel calls from one IP are what trip the per-IP limit."""
+        self._patch_brouter(mocker)
+        state = {"live": 0, "peak": 0}
+
+        async def slow_walk(client, origin, stop):
+            state["live"] += 1
+            state["peak"] = max(state["peak"], state["live"])
+            await find.asyncio.sleep(0.01)
+            state["live"] -= 1
+            return 300.0, None
+
+        mocker.patch.object(find, "_brouter_walk_m", slow_walk)
+        find.asyncio.run(find.walking_distances((32.07, 34.79), find.load_stops()))
+        assert state["peak"] == 1, "BRouter requests must be serialised"
+
 
 class TestWalkingDistancesOrs:
     """The OpenRouteService backend, once _pick_router has chosen it."""
@@ -688,6 +765,76 @@ class TestFindNearest:
         mocker.patch.object(find, "_pick_router", lambda: None)
         result = find.find_nearest(32.0747, 34.7920, top=1)
         assert len(result["all_stops"]) == 3
+
+
+class TestRoutePrefilter:
+    """Stops too far to walk are never routed.
+
+    Sweeping the whole dataset for one search is what tripped BRouter's per-IP
+    limit; only stops that could still fall inside the cutoff are worth a
+    router call at all.
+    """
+
+    @staticmethod
+    def _stop(name: str, lat: float) -> dict[str, Any]:
+        return {
+            "stop_id": name,
+            "code": name,
+            "name": name,
+            "name_en": name,
+            "lat": lat,
+            "lon": 34.7920,
+            "index": 1,
+            "is_park_and_ride": False,
+        }
+
+    def test_only_stops_a_walk_could_reach_are_routed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+    ) -> None:
+        mocker.patch.object(find, "_pick_router", lambda: None)
+        write_cache(
+            monkeypatch,
+            tmp_path,
+            [{"line": "811", "name": "X", "stop_count": 2, "stops": [
+                self._stop("Inside", 32.0747 + 0.021),   # ~2.34 km
+                self._stop("Outside", 32.0747 + 0.023),  # ~2.56 km
+            ]}],
+        )
+        routed: dict[str, Any] = {}
+
+        async def spy(origin, stops):
+            routed["names"] = [s["name_en"] for s in stops]
+            return []
+
+        mocker.patch.object(find, "walking_distances", spy)
+        find.find_nearest(32.0747, 34.7920)
+        assert routed["names"] == ["Inside"]
+
+    def test_the_ceiling_is_exactly_the_walk_cutoff(self) -> None:
+        assert find.ROUTE_PREFILTER_M == find.MAX_WALK_MIN * find.WALK_M_PER_MIN
+
+    def test_a_prefiltered_far_stop_never_surfaces(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+    ) -> None:
+        """Not even a router reporting a short walk can resurrect a far stop."""
+        mocker.patch.object(find, "_pick_router", lambda: find.config.BROUTER_URL)
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(
+                lambda r: _FakeGetResponse(brouter_response(300.0))
+            ),
+        )
+        write_cache(
+            monkeypatch,
+            tmp_path,
+            [{"line": "811", "name": "X", "stop_count": 2, "stops": [
+                self._stop("Near", 32.0747),
+                self._stop("Far", 32.0747 + 0.03),  # ~3.3 km, past the ceiling
+            ]}],
+        )
+        result = find.find_nearest(32.0747, 34.7920)
+        assert [s["name_en"] for s in result["all_stops"]] == ["Near"]
 
 
 class TestWalkTimeCutoff:
@@ -1262,6 +1409,35 @@ class TestRouterPickBrouter:
         assert find._pick_router() == find.config.OPENROUTESERVICE_URL
 
 
+    def test_a_cooling_brouter_is_not_probed(self, mocker) -> None:
+        """While the cooldown runs, no quota is spent re-learning it is down."""
+        self._fail_valhalla(mocker)
+        find._BROUTER_DOWN_UNTIL = find.time.monotonic() + 60
+        gets = {"n": 0}
+
+        def get(url, **kwargs):
+            gets["n"] += 1
+            return _FakeSyncResponse(200, json_body=brouter_response(300.0))
+
+        mocker.patch.object(find.httpx, "get", get)
+        assert find._pick_router() is None
+        assert gets["n"] == 0, "a cooling BRouter must not be probed"
+
+    def test_a_throttled_probe_starts_a_cooldown(self, mocker) -> None:
+        """A 403 from the probe must itself begin the cooldown."""
+        self._fail_valhalla(mocker)
+        assert not find._brouter_cooling_down()
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(
+                403, text="Please, retry later!"
+            ),
+        )
+        assert find._pick_router() is None
+        assert find._brouter_cooling_down()
+
+
 class TestRouterCacheExpiry:
     def test_failure_cache_expires_so_a_restart_is_picked_up(
         self, mocker
@@ -1426,6 +1602,27 @@ class TestRoutingStatus:
         assert status["cached"]["router"] == "http://cached/route"
         assert status["cached"]["ttl_s"] == find.ROUTER_OK_TTL_S
 
+    def test_a_cooling_brouter_is_reported_skipped_not_probed(self, mocker) -> None:
+        """The diagnostic must not spend BRouter quota during the cooldown."""
+        gets: list[str] = []
+
+        def get(url, **kwargs):
+            gets.append(url)
+            return _FakeSyncResponse(503)
+
+        mocker.patch.object(
+            find.httpx, "post", lambda url, json=None, **kwargs: _FakeSyncResponse(503)
+        )
+        mocker.patch.object(find.httpx, "get", get)
+        find._BROUTER_DOWN_UNTIL = find.time.monotonic() + 60
+
+        status = find.routing_status()
+
+        assert gets == [], "a cooling BRouter must not be probed"
+        brouter = next(c for c in status["candidates"] if c["kind"] == "brouter")
+        assert brouter["skipped"] is True
+        assert brouter["ok"] is False
+
 
 # What a healthy Valhalla route POST answers with - the shape the probe
 # requires before it will call a host pickable.
@@ -1501,9 +1698,12 @@ class _FakeRequest:
 class _FakeGetResponse:
     """Stand-in for httpx.Response, enough for the ORS GET call site."""
 
-    def __init__(self, payload: object, status: int = 200) -> None:
+    def __init__(
+        self, payload: object, status: int = 200, headers: dict | None = None
+    ) -> None:
         self._payload = payload
         self.status_code = status
+        self.headers = headers or {}
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:

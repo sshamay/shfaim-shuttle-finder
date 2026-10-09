@@ -29,6 +29,18 @@ ESTIMATE_DETOUR_FACTOR = 1.2
 # through a round() rule; the ranking decision uses raw minutes too.
 MAX_WALK_MIN = 30.0
 
+# The longest straight-line hop that can still fit inside the walk cutoff: a
+# real path is never shorter than the crow-flies distance, so a stop beyond
+# this can be discarded without asking any router. This is what keeps a sweep
+# of the whole dataset down to the few stops an origin could actually reach.
+ROUTE_PREFILTER_M = MAX_WALK_MIN * WALK_M_PER_MIN
+
+# A community server that starts answering 403 "retry later" is left alone
+# until this cooldown passes: hammering it only extends the block, and a
+# straight-line estimate serves the stop better in the meantime.
+BROUTER_COOLDOWN_S = 60.0
+_BROUTER_DOWN_UNTIL = 0.0
+
 
 def _sign_number_shift(stops: list[dict[str, Any]]) -> int:
     """How far 20fl's ``index`` runs ahead of the number painted on the stop sign.
@@ -202,20 +214,58 @@ def _ors_answers(base: str) -> bool:
         return False
 
 
+def _brouter_cooling_down() -> bool:
+    """True while a rate limit is still being respected."""
+    return time.monotonic() < _BROUTER_DOWN_UNTIL
+
+
+def _brouter_note_throttled(retry_after: str | None = None) -> None:
+    """Remember a rate limit so the next stops skip BRouter instead of feeding it.
+
+    ``Retry-After`` is honoured when it is a number of seconds; the default
+    cooldown covers servers that only answer "Please, retry later!".
+    """
+    global _BROUTER_DOWN_UNTIL
+    delay = BROUTER_COOLDOWN_S
+    if retry_after:
+        try:
+            delay = max(delay, float(retry_after))
+        except ValueError:
+            pass
+    _BROUTER_DOWN_UNTIL = max(_BROUTER_DOWN_UNTIL, time.monotonic() + delay)
+
+
 def _brouter_outcome(base: str) -> dict[str, Any]:
     """Probe BRouter with a real tiny walk over GET, demanding GeoJSON back.
 
     Last in the pick order, so this community server only ever sees probe
-    traffic once every other backend has already failed.
+    traffic once every other backend has already failed. While it is cooling
+    down after a rate limit the probe is skipped entirely - there is no point
+    spending quota to learn what the last answer already said.
     """
     lon1, lat1, lon2, lat2 = _PROBE_WALK
-    return _probe_outcome(
+    probe_url = _brouter_directions_url(base, lon1, lat1, lon2, lat2)
+    if _brouter_cooling_down():
+        return {
+            "kind": "brouter",
+            "route_url": base,
+            "probe_url": probe_url,
+            "ok": False,
+            "http_status": 403,
+            "latency_ms": 0,
+            "skipped": True,
+            "error": "cooling down after a rate limit",
+        }
+    outcome = _probe_outcome(
         "brouter",
         base,
-        _brouter_directions_url(base, lon1, lat1, lon2, lat2),
+        probe_url,
         headers={"User-Agent": config.USER_AGENT},
         body_check=_brouter_has_route,
     )
+    if outcome["http_status"] in (403, 429):
+        _brouter_note_throttled()
+    return outcome
 
 
 def _probe_outcome(
@@ -525,11 +575,15 @@ async def _brouter_walk_m(
     """
     lon1, lat1 = origin[1], origin[0]
     lon2, lat2 = stop["lon"], stop["lat"]
+    if _brouter_cooling_down():
+        raise ValueError("brouter is cooling down after a rate limit")
     r = await client.get(
         _brouter_directions_url(config.BROUTER_URL, lon1, lat1, lon2, lat2),
         headers={"User-Agent": config.USER_AGENT},
         timeout=25,
     )
+    if r.status_code in (403, 429):
+        _brouter_note_throttled(r.headers.get("Retry-After"))
     r.raise_for_status()
     data = r.json()
     features = data.get("features") or []
@@ -551,10 +605,13 @@ async def walking_distances(
     """Pedestrian distance from the origin to each stop.
 
     Requests run concurrently, capped so a shared public server is not
-    overwhelmed. Any stop whose route fails falls back to a straight-line
-    estimate, flagged so the UI can say so.
+    overwhelmed. BRouter is throttled harder still - one request at a time -
+    because its per-IP limit is what a burst of stop lookups would trip. Any
+    stop whose route fails falls back to a straight-line estimate, flagged so
+    the UI can say so.
     """
     semaphore = asyncio.Semaphore(6)
+    brouter_gate = asyncio.Semaphore(1)
     router = await asyncio.to_thread(_pick_router)
     backend = _backend(router) if router else None
 
@@ -579,7 +636,10 @@ async def walking_distances(
                 if backend == "ors":
                     meters, geometry = await _ors_walk_m(client, origin, stop)
                 elif backend == "brouter":
-                    meters, geometry = await _brouter_walk_m(client, origin, stop)
+                    # Serialised: the community server counts requests per IP,
+                    # so a burst of five stops is what earns the 403.
+                    async with brouter_gate:
+                        meters, geometry = await _brouter_walk_m(client, origin, stop)
                 else:
                     meters, geometry = await _valhalla_walk_m(client, router, origin, stop)
                 if meters > 0:
@@ -598,9 +658,17 @@ async def walking_distances(
 
 
 def find_nearest(lat: float, lon: float, top: int = 5) -> dict[str, Any]:
-    """Walk to every stop and rank. `lat`/`lon` come from geocoding or a map click."""
+    """Walk to every reachable stop and rank. `lat`/`lon` come from geocoding or a map click."""
     stops = load_stops()
-    results = asyncio.run(walking_distances((lat, lon), stops))
+    # Only stops a walk could still reach are routed. The rest cannot qualify
+    # under the cutoff no matter which streets a router picks, and sweeping the
+    # whole dataset is exactly what tripped BRouter's per-IP limit.
+    reachable = [
+        s
+        for s in stops
+        if haversine_m(lat, lon, s["lat"], s["lon"]) <= ROUTE_PREFILTER_M
+    ]
+    results = asyncio.run(walking_distances((lat, lon), reachable))
 
     ranked = []
     for item in results:
