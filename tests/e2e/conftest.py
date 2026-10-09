@@ -46,11 +46,12 @@ def _candidate(
     lon: float,
     type_: str,
     out_of_area: bool,
+    street: str = "",
 ) -> dict:
     """One geocoder answer shaped exactly like the live ``geocode.search`` output."""
     return {
         "label": label,
-        "street": label,
+        "street": street or label,
         "housenumber": housenumber,
         "city": city,
         "state": "",
@@ -113,7 +114,47 @@ async def _fake_search(query: str, *, limit: int = 5) -> list[dict]:
     """The "Marsel yanko 10" fixture: one firm local address, plus same-number
     POI and a homonym abroad. Exactly one local address-type candidate, which
     is the condition the UI's auto-select branch requires.
+
+    "Bialik 7" is the street-only fixture for the house-number refine: the
+    first query gets street answers with no number, and the UI's follow-up
+    "<street> <number>, <city>" query gets the numbered house.
     """
+    if query == "Bialik 7":
+        return [
+            _candidate(
+                label="Bialik, Tel Aviv",
+                city="Tel Aviv",
+                housenumber="",
+                lat=32.0721,
+                lon=34.7777,
+                type_="tertiary",
+                out_of_area=False,
+                street="Bialik",
+            ),
+            _candidate(
+                label="Bialik, Ramat Gan",
+                city="Ramat Gan",
+                housenumber="",
+                lat=32.0655,
+                lon=34.801,
+                type_="tertiary",
+                out_of_area=False,
+                street="Bialik",
+            ),
+        ]
+    if query == "Bialik 7, Tel Aviv":
+        return [
+            _candidate(
+                label="Bialik 7, Tel Aviv",
+                city="Tel Aviv",
+                housenumber="7",
+                lat=32.0725,
+                lon=34.778,
+                type_="house",
+                out_of_area=False,
+                street="Bialik",
+            ),
+        ]
     return [
         _candidate(
             label="Marcel Janco 10",

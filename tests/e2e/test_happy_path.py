@@ -51,6 +51,32 @@ def test_typing_a_street_address_resolves_straight_to_the_map(page) -> None:
     assert page.input_value("#q") == "Marsel yanko 10"
 
 
+def test_picking_a_street_keeps_the_typed_house_number(page) -> None:
+    """A street-only pick must not drop the number the user typed.
+
+    The stub answers "Bialik 7" with two street candidates and no number, so
+    the list appears. Clicking one triggers the refine: the UI re-asks for
+    "<street> <number>, <city>", and only a local numbered match on the same
+    street may replace the street point.
+    """
+    q = page.locator("#q")
+    q.fill("Bialik 7")
+    q.press("Enter")
+
+    # Two local street answers: the list is offered, nothing auto-selects.
+    items = page.locator("#candidates li")
+    items.first.wait_for(timeout=10_000)
+    assert items.count() == 2
+
+    items.first.click()
+
+    # The refined house replaced the street point: the box now carries the
+    # full address and the results came from the house coordinates.
+    page.locator("#winner .walk").wait_for(timeout=10_000)
+    assert page.input_value("#q") == "Bialik 7, Tel Aviv"
+    assert page.evaluate("() => map.getBounds().contains([32.0725, 34.778])")
+
+
 def test_results_can_be_hidden_and_restored(page) -> None:
     """The panel folds up so the map gets the screen back, with a visible undo.
 

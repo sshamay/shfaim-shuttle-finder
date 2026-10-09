@@ -98,6 +98,62 @@ async def _canned_search(
     return results, sent
 
 
+class TestPhotonLocationBias:
+    def test_every_query_carries_the_metro_as_a_bias(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bare "q" ranked Ramat Gan streets above the Tel Aviv answer.
+
+        Photon re-ranks results around a lat/lon point, so every request now
+        carries the metro centre; without it "Bialik 5 Tel Aviv" returned a
+        street-only Ramat Gan hit first while the numbered Tel Aviv address
+        existed all along.
+        """
+        calls: list[dict] = []
+
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return photon_response(
+                    photon_feature(
+                        name="Bialik",
+                        city=TEL_AVIV,
+                        housenumber="5",
+                        street="Bialik",
+                        osm_value="house",
+                        lat=32.07,
+                        lon=34.77,
+                    )
+                )
+
+        class _Client:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *e):
+                return None
+
+            async def get(self, url, params=None, **k):
+                calls.append(dict(params or {}))
+                return _Resp()
+
+        monkeypatch.setattr(geocode.httpx, "AsyncClient", _Client)
+        import asyncio
+
+        results = asyncio.run(geocode.PhotonGeocoder().search("Bialik 5 Tel Aviv"))
+
+        assert results, "expected the biased hit"
+        assert calls, "expected a Photon request"
+        assert calls[0]["lat"] == pytest.approx(geocode.METRO_CENTER[0])
+        assert calls[0]["lon"] == pytest.approx(geocode.METRO_CENTER[1])
+        assert calls[0]["lang"] == "en"
+
+
 class TestPhotonLanguage:
     def test_requests_english_results(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """lang=default returned Hebrew-only names for an English UI."""

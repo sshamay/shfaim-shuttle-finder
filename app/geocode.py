@@ -146,7 +146,15 @@ class PhotonGeocoder(Geocoder):
     async def _fetch(self, query: str, limit: int) -> list[dict[str, Any]]:
         # lang=en, not default: it keeps the query language instead of returning
         # Hebrew-only names, and drops same-name POIs in other towns.
-        params = {"q": query, "limit": limit, "lang": "en"}
+        # lat/lon bias: without it "Bialik 5 Tel Aviv" ranked Ramat Gan streets
+        # above the Tel Aviv address; Photon re-ranks around the point given.
+        params = {
+            "q": query,
+            "limit": limit,
+            "lang": "en",
+            "lat": METRO_CENTER[0],
+            "lon": METRO_CENTER[1],
+        }
         async with httpx.AsyncClient(timeout=15, headers=_headers()) as c:
             r = await c.get(PHOTON_URL, params=params)
             if r.status_code == 429:

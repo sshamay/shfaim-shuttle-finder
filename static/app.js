@@ -315,16 +315,75 @@ function render(data) {
   }).addTo(map);
 }
 
+// The latest query as the user typed it. The box gets overwritten with the
+// picked candidate's label, but the number typed here must survive into the
+// pick; read by selectCandidate when the pick is only a street.
+let typedQuery = "";
+
+// "Sderot Weizmann" and "Weizmann" are one street to us; the road prefix is
+// decoration, so street matches ignore it.
+function normalizeStreet(s) {
+  return (s || "")
+    .toLowerCase()
+    .replace(/^(sderot|shderot|st\.?|street|road|rechov)\s+/, "")
+    .trim();
+}
+
+async function refineStreetAddress(candidate, typed) {
+  // Photon answered a house-number query with a street only. Re-ask for
+  // "<street> <number>, <city>" (the server biases the lookup towards Tel
+  // Aviv) and accept the answer only when it is a local, numbered match on
+  // the same street; anything else leaves the street point as it was.
+  const match = typed.match(/\d+/);
+  if (!match || !candidate.street) return null;
+  const q = candidate.city
+    ? `${candidate.street} ${match[0]}, ${candidate.city}`
+    : `${candidate.street} ${match[0]}`;
+  setStatus("Looking up the house number...");
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) return null;
+    const { candidates } = await res.json();
+    const street = normalizeStreet(candidate.street);
+    if (!street) return null;
+    return (
+      candidates.find((c) => {
+        if (c.out_of_area || c.housenumber !== match[0]) return false;
+        const other = normalizeStreet(c.street);
+        return other && (other === street || other.includes(street) || street.includes(other));
+      }) || null
+    );
+  } catch {
+    return null;
+  }
+}
+
 function selectCandidate(candidate, { updateBox = false } = {}) {
-  if (updateBox) qEl.value = candidate.label;
-  listEl.hidden = true;
-  map.setView([candidate.lat, candidate.lon], 17);
-  loadNearest(candidate.lat, candidate.lon);
+  let target = candidate;
+  // Picking a street-only result must not drop the house number the user
+  // typed: ask the geocoder once more for "<street> <number>, <city>" and
+  // only a local numbered match is allowed to replace the street point.
+  if (!candidate.housenumber && /\d/.test(typedQuery)) {
+    refineStreetAddress(candidate, typedQuery).then((refined) => {
+      if (refined) target = refined;
+      finish();
+    });
+    return;
+  }
+  finish();
+
+  function finish() {
+    if (updateBox) qEl.value = target.label;
+    listEl.hidden = true;
+    map.setView([target.lat, target.lon], 17);
+    loadNearest(target.lat, target.lon);
+  }
 }
 
 async function searchAddress() {
   const query = qEl.value.trim();
   if (query.length < 2) return;
+  typedQuery = query;
   setStatus("Searching...");
   goEl.disabled = true;
   listEl.innerHTML = "";
