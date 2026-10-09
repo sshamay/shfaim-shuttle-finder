@@ -238,10 +238,12 @@ def _brouter_note_throttled(retry_after: str | None = None) -> None:
 def _brouter_outcome(base: str) -> dict[str, Any]:
     """Probe BRouter with a real tiny walk over GET, demanding GeoJSON back.
 
-    Last in the pick order, so this community server only ever sees probe
-    traffic once every other backend has already failed. While it is cooling
-    down after a rate limit the probe is skipped entirely - there is no point
-    spending quota to learn what the last answer already said.
+    After the Valhalla hosts it sits either before ORS (when it is our own
+    server, with no quota to respect) or after it (the public community
+    server, a strict last resort that only ever sees probe traffic once every
+    other backend has failed). While it is cooling down after a rate limit the
+    probe is skipped entirely - there is no point spending quota to learn what
+    the last answer already said.
     """
     lon1, lat1, lon2, lat2 = _PROBE_WALK
     probe_url = _brouter_directions_url(base, lon1, lat1, lon2, lat2)
@@ -352,6 +354,8 @@ def routing_status() -> dict[str, Any]:
     ors_probe = _ors_directions_url(
         config.OPENROUTESERVICE_URL, lon1, lat1, lon2, lat2
     )
+    if config.BROUTER_IS_SELF_HOSTED:
+        candidates.append(_brouter_outcome(config.BROUTER_URL))
     if key:
         candidates.append(
             _probe_outcome(
@@ -374,13 +378,15 @@ def routing_status() -> dict[str, Any]:
                 "error": "OPENROUTESERVICE_API_KEY is not set",
             }
         )
-    candidates.append(_brouter_outcome(config.BROUTER_URL))
+    if not config.BROUTER_IS_SELF_HOSTED:
+        candidates.append(_brouter_outcome(config.BROUTER_URL))
 
     return {
         "key_configured": bool(key),
         "key_length": len(key),
-        # Same order as _pick_router: first Valhalla host that answers, else
-        # ORS when its key is set and it answers, else BRouter.
+        # Same order as _pick_router: first Valhalla host that answers, then
+        # BRouter when it is self-hosted, then ORS once its key is set and it
+        # answers, then the public BRouter server as the strict last resort.
         "would_pick": next((c["route_url"] for c in candidates if c["ok"]), None),
         "cached": {
             "router": _ROUTER_CACHE,
@@ -398,11 +404,12 @@ def _pick_router() -> str | None:
 
     Candidates run in order: each Valhalla host in ``config.VALHALLA_URLS``
     (probed with a tiny real ``POST /route`` - its ``/status`` answers while
-    routes are refused, which would pin every stop to estimates), then
-    OpenRouteService when an ``OPENROUTESERVICE_API_KEY`` is configured
-    (probed with a minimal directions request), then the keyless BRouter
-    community server (probed with the same tiny walk, GeoJSON body
-    required). The first that answers is used for the whole request.
+    routes are refused, which would pin every stop to estimates), then BRouter
+    when it is self-hosted (no per-IP quota, so it beats the keyed cloud),
+    then OpenRouteService when an ``OPENROUTESERVICE_API_KEY`` is configured
+    (probed with a minimal directions request), then the public BRouter
+    community server as the strict last resort. The first that answers is
+    used for the whole request.
 
     Probing costs a few seconds and was previously repeated for every stop,
     which turned a routing outage into a multi-minute request. Caching the
@@ -429,11 +436,15 @@ def _pick_router() -> str | None:
         if outcome["ok"]:
             found = base
             break
+    if found is None and config.BROUTER_IS_SELF_HOSTED:
+        if _brouter_outcome(config.BROUTER_URL)["ok"]:
+            found = config.BROUTER_URL
     if found is None and config.ors_api_key():
         if _ors_answers(config.OPENROUTESERVICE_URL):
             found = config.OPENROUTESERVICE_URL
-    if found is None and _brouter_outcome(config.BROUTER_URL)["ok"]:
-        found = config.BROUTER_URL
+    if found is None and not config.BROUTER_IS_SELF_HOSTED:
+        if _brouter_outcome(config.BROUTER_URL)["ok"]:
+            found = config.BROUTER_URL
 
     _ROUTER_CACHE = found
     _ROUTER_CHECKED_AT = now

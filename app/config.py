@@ -24,19 +24,22 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "shfaim-shuttle-finder/1.0 (personal project)"
 
-# FOSSGIS asks apps that request their public Valhalla demo
-# (valhalla1.openstreetmap.de) to identify themselves with an X-Client-Id
-# header alongside the usual User-Agent - see the note in valhalla's README.
+# Routing sends an identifying User-Agent and X-Client-Id header, the way
+# FOSSGIS asks apps that use its public Valhalla demos to - harmless on the
+# local container, and one code path instead of two. The public demo itself
+# (valhalla1.openstreetmap.de) is no longer in the chain: from US data
+# centers it answers GET /status while refusing POST /route, and picking it
+# on the status answer alone pinned every stop to estimates.
 CLIENT_ID = "shfaim-shuttle-finder"
 
-# Routing backends, tried in order: a local Valhalla container
-# (scripts/setup_routing.sh), a public Valhalla instance, OpenRouteService
-# when OPENROUTESERVICE_API_KEY is set, and BRouter as the keyless last
-# resort. VALHALLA_URL points at the first candidate when set, so a
-# deployment that cannot reach the public demos can use a server of its own.
+# Routing backends, tried in order: the local Valhalla container
+# (scripts/setup_routing.sh), then BRouter when BROUTER_URL points at a
+# server we run ourselves, then OpenRouteService when OPENROUTESERVICE_API_KEY
+# is set, and the public BRouter community server as the keyless last resort.
+# VALHALLA_URL points at the first candidate when set, so a deployment that
+# cannot reach the local container can use a server of its own.
 DEFAULT_VALHALLA_URLS = [
     "http://localhost:8002/route",
-    "https://valhalla1.openstreetmap.de/route",
 ]
 
 # OpenRouteService is the cloud-friendly fallback: reachable from US data
@@ -46,10 +49,26 @@ DEFAULT_VALHALLA_URLS = [
 # every query as a drive.
 OPENROUTESERVICE_URL = "https://api.openrouteservice.org/v2/directions/foot-walking"
 
-# BRouter's public community server, probed last: keyless, no quota
-# published, and its GeoJSON answer carries a drawable path straight away.
-# It only ever sees traffic when every other backend is down.
-BROUTER_URL = "https://brouter.de/brouter"
+# BRouter's public community server: keyless, no quota published, and its
+# GeoJSON answer carries a drawable path straight away. Deployments can point
+# at their own instance instead - render.yaml's shfaim-brouter web service -
+# through BROUTER_URL directly, or BROUTER_PUBLIC_URL (that service's full
+# onrender.com URL), from which the /brouter path is derived.
+PUBLIC_BROUTER_URL = "https://brouter.de/brouter"
+
+_brouter_env = os.environ.get("BROUTER_URL", "").strip()
+_brouter_public = os.environ.get("BROUTER_PUBLIC_URL", "").strip().rstrip("/")
+if _brouter_env:
+    BROUTER_URL = _brouter_env
+elif _brouter_public:
+    BROUTER_URL = f"{_brouter_public}/brouter"
+else:
+    BROUTER_URL = PUBLIC_BROUTER_URL
+
+# A BRouter we run ourselves has no per-IP quota to respect, so it ranks
+# above the keyed OpenRouteService; the public community server stays a
+# strict last resort behind it.
+BROUTER_IS_SELF_HOSTED = BROUTER_URL != PUBLIC_BROUTER_URL
 
 _valhalla_env = os.environ.get("VALHALLA_URL", "").strip()
 if _valhalla_env:

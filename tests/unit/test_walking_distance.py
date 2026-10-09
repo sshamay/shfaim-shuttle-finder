@@ -1162,16 +1162,21 @@ class TestRouterPick:
         assert find._pick_router() == "http://localhost:8002/route"
         assert seen[0] == "http://localhost:8002/route", "probe the route itself"
 
-    def test_falls_through_to_public_host(self, mocker) -> None:
-        def post(url, json=None, **kwargs):
-            if "localhost" in url:
-                return _FakeSyncResponse(503)
-            if "valhalla1.openstreetmap.de" in url:
-                return _FakeSyncResponse(200)
-            return _FakeSyncResponse(503)
-
-        mocker.patch.object(find.httpx, "post", post)
-        assert find._pick_router() == "https://valhalla1.openstreetmap.de/route"
+    def test_falls_through_to_public_brouter(self, mocker) -> None:
+        """Localhost down and no ORS key: the public BRouter answers the probe."""
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(503),
+        )
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(
+                200, json_body=brouter_response(300.0)
+            ),
+        )
+        assert find._pick_router() == find.config.BROUTER_URL
 
     def test_returns_none_when_all_hosts_fail(self, mocker) -> None:
         mocker.patch.object(
@@ -1438,6 +1443,66 @@ class TestRouterPickBrouter:
         assert find._brouter_cooling_down()
 
 
+class TestRouterPickSelfHostedBrouter:
+    """A BRouter we run ourselves is the primary cloud backend.
+
+    It has no per-IP quota to blow, so it must outrank the keyed
+    OpenRouteService; the public community server is the one that stays a
+    strict last resort behind ORS.
+    """
+
+    SELF_HOSTED = "https://router.example.test/brouter"
+
+    @staticmethod
+    def _self_hosted(mocker) -> None:
+        mocker.patch.object(config, "BROUTER_URL", TestRouterPickSelfHostedBrouter.SELF_HOSTED)
+        mocker.patch.object(config, "BROUTER_IS_SELF_HOSTED", True)
+
+    def test_self_hosted_brouter_wins_over_ors(self, mocker) -> None:
+        self._self_hosted(mocker)
+        mocker.patch.object(find.config, "ors_api_key", lambda: "test-key")
+        mocker.patch.object(
+            find.httpx,
+            "post",
+            lambda url, json=None, **kwargs: _FakeSyncResponse(503),
+        )
+        mocker.patch.object(
+            find.httpx,
+            "get",
+            lambda url, timeout=None, **kwargs: _FakeSyncResponse(
+                200, json_body=brouter_response(300.0)
+            ),
+        )
+        assert find._pick_router() == self.SELF_HOSTED
+
+    def test_routing_status_probes_self_hosted_brouter_before_ors(
+        self, mocker
+    ) -> None:
+        self._self_hosted(mocker)
+        gets: list[str] = []
+
+        def post(url, json=None, **kwargs):
+            return _FakeSyncResponse(503)
+
+        def get(url, **kwargs):
+            gets.append(url)
+            if url.startswith(self.SELF_HOSTED):
+                return _FakeSyncResponse(200, json_body=brouter_response(300.0))
+            return _FakeSyncResponse(503)
+
+        mocker.patch.object(find.httpx, "post", post)
+        mocker.patch.object(find.httpx, "get", get)
+        mocker.patch.object(find.config, "ors_api_key", lambda: "test-key-123")
+
+        status = find.routing_status()
+
+        kinds = [c["kind"] for c in status["candidates"]]
+        assert kinds == ["valhalla", "brouter", "ors"]
+        assert gets[0].startswith(self.SELF_HOSTED)
+        assert gets[1].startswith(config.OPENROUTESERVICE_URL)
+        assert status["would_pick"] == self.SELF_HOSTED
+
+
 class TestRouterCacheExpiry:
     def test_failure_cache_expires_so_a_restart_is_picked_up(
         self, mocker
@@ -1476,10 +1541,12 @@ class TestRoutingStatus:
 
         def post(url, json=None, **kwargs):
             posts.append(url)
-            return _FakeSyncResponse(200 if "valhalla1" in url else 503)
+            return _FakeSyncResponse(503)
 
         def get(url, **kwargs):
             gets.append(url)
+            if url.startswith(config.BROUTER_URL):
+                return _FakeSyncResponse(200, json_body=brouter_response(300.0))
             return _FakeSyncResponse(503)
 
         mocker.patch.object(find.httpx, "post", post)
@@ -1495,14 +1562,14 @@ class TestRoutingStatus:
             assert posts[index] == base
             assert status["candidates"][index]["route_url"] == base
             assert status["candidates"][index]["probe_url"] == base
-        # ...then ORS, then BRouter - each after Valhalla failed.
+        # ...then ORS, then the public BRouter - each after Valhalla failed.
         assert gets[0].startswith(config.OPENROUTESERVICE_URL)
         assert gets[1].startswith(config.BROUTER_URL)
         kinds = [c["kind"] for c in status["candidates"]]
-        assert kinds == ["valhalla", "valhalla", "ors", "brouter"]
-        assert status["would_pick"] == "https://valhalla1.openstreetmap.de/route"
+        assert kinds == ["valhalla", "ors", "brouter"]
+        assert status["would_pick"] == config.BROUTER_URL
         assert all(c["latency_ms"] >= 0 for c in status["candidates"])
-        assert all(c["ok"] is (i == 1) for i, c in enumerate(status["candidates"]))
+        assert [c["ok"] for c in status["candidates"]] == [False, False, True]
 
     def test_without_a_key_ors_is_reported_skipped_not_probed(self, mocker) -> None:
         posts: list[str] = []

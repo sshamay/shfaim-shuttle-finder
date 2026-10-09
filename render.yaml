@@ -18,9 +18,37 @@ services:
         value: 3.12.7
       - key: GEOCODER
         value: photon
+      # The self-hosted BRouter's public URL. Free web services cannot receive
+      # private-network traffic, so the app reaches it over the public web;
+      # copying RENDER_EXTERNAL_URL keeps the wiring automatic. If the
+      # Blueprint cannot copy that reserved var, set BROUTER_URL manually on
+      # this service to <brouter service URL>/brouter instead.
+      - key: BROUTER_PUBLIC_URL
+        fromService:
+          name: shfaim-brouter
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
       - key: SERPAPI_API_KEY
         sync: false
       - key: VALHALLA_URL
         sync: false
       - key: OPENROUTESERVICE_API_KEY
         sync: false
+
+  - type: web
+    name: shfaim-brouter
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: brouter/Dockerfile
+    # A tiny real walk, so the health check doubles as a wake-up: it keeps
+    # the JVM and segments warm and pulls the instance out of a free-plan
+    # sleep before a visitor's first search pays the cold start.
+    healthCheckPath: /brouter?lonlats=34.8260,32.2150|34.8310,32.2050&profile=trekking&format=geojson
+    envVars:
+      - key: PORT
+        value: "17777"
+      - key: MAXTHREADS
+        value: "2"
+      - key: JAVA_OPTS
+        value: "-Xmx256M -Xms64M -DmaxRunningTime=300 -DuseRFCMimeType=false"

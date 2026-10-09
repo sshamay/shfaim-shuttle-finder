@@ -120,20 +120,24 @@ shuttle is due, which this does not cover.
 
 **Routing backends, in order.** Walk times are exact when a pedestrian router
 is reachable: a local Valhalla container (`scripts/setup_routing.sh`) is tried
-first, then a public Valhalla instance, then OpenRouteService as the
-cloud-friendly fallback (free key, ~2,000 directions/day, no credit card).
-OpenRouteService matters because the app also runs in US data centers, where
-the round trip to `openstreetmap.de` times out and would otherwise leave every
-walk an estimate. Set its key as `OPENROUTESERVICE_API_KEY` in Render's
-dashboard; `render.yaml` keeps it out of sync so the value stays secret. The
-old OSRM public demo was dropped because it ignores the `foot` profile and
-answers every query with driving distances — when picking a backend, check
-that walking actually changes the answer. Every request to a Valhalla host
-carries `User-Agent` and `X-Client-Id: shfaim-shuttle-finder`, as the FOSSGIS
-public-demo README asks. When OpenRouteService answers, its GeoJSON path rides
-along to the browser, which draws the walk to the winning stop on the map;
-estimates and Valhalla return no drawable path, so those searches show no
-line.
+first, then BRouter as the primary cloud backend, then OpenRouteService as the
+keyed fallback (free key, ~2,000 directions/day, no credit card). BRouter is a
+self-hosted instance (`render.yaml`'s `shfaim-brouter` web service) whose tile
+files come from brouter.de — keyless, no per-IP quota, and its GeoJSON answer
+carries the walk line to the map. The app learns its URL automatically via
+`BROUTER_PUBLIC_URL` (a copy of that service's `RENDER_EXTERNAL_URL`); a
+deployment without a self-hosted instance falls back to `https://brouter.de/brouter`
+as a strict last resort behind OpenRouteService. OpenRouteService matters when
+BRouter is down, because public `openstreetmap.de` hosts refuse routes from US
+data centers — the old public Valhalla demo was dropped for answering
+`GET /status` from there while refusing `POST /route`. Set its key as
+`OPENROUTESERVICE_API_KEY` in Render's dashboard; `render.yaml` keeps it out of
+sync so the value stays secret. Every request to a Valhalla host carries
+`User-Agent` and `X-Client-Id: shfaim-shuttle-finder`, as the FOSSGIS
+public-demo README asks. When BRouter or OpenRouteService answers, its GeoJSON
+path rides along to the browser, which draws the walk to the winning stop on
+the map; estimates and Valhalla return no drawable path, so those searches show
+no line.
 
 **If every router is down, results degrade quietly.** The app falls back to
 straight-line estimates, marked `~`, with a banner. Those are optimistically

@@ -680,13 +680,12 @@ class TestRoutingStatusEndpoint:
         assert body["key_configured"] is False
         assert [c["kind"] for c in body["candidates"]] == [
             "valhalla",
-            "valhalla",
             "ors",
             "brouter",
         ]
         assert body["candidates"][0]["http_status"] == 503
         assert "backend unhappy" in body["candidates"][0]["error"]
-        ors = body["candidates"][2]
+        ors = body["candidates"][1]
         assert ors["skipped"] is True
         assert "OPENROUTESERVICE_API_KEY" in ors["error"]
         assert body["candidates"][-1]["kind"] == "brouter"
@@ -706,7 +705,7 @@ class TestRoutingStatusEndpoint:
         body = response.json()
         assert body["key_configured"] is True
         assert body["key_length"] == len("integration-secret-key-9")
-        ors = body["candidates"][2]
+        ors = body["candidates"][1]
         assert ors["kind"] == "ors"
         assert ors["ok"] is False
         assert ors["http_status"] == 403
