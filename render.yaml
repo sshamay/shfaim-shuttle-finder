@@ -43,12 +43,7 @@ services:
     dockerfilePath: brouter/Dockerfile
     # A tiny real walk, so the health check doubles as a wake-up: it keeps
     # the JVM and segments warm and pulls the instance out of a free-plan
-    # sleep before a visitor's first search pays the cold start.
+    # sleep before a visitor's first search pays the cold start. (The image's
+    # server.sh hardcodes port 17777, thread count, and JAVA_OPTS, so there
+    # are no PORT/MAXTHREADS/JAVA_OPTS env vars to set.)
     healthCheckPath: /brouter?lonlats=34.8260,32.2150|34.8310,32.2050&profile=trekking&format=geojson
-    envVars:
-      - key: PORT
-        value: "17777"
-      - key: MAXTHREADS
-        value: "2"
-      - key: JAVA_OPTS
-        value: "-Xmx256M -Xms64M -DmaxRunningTime=300 -DuseRFCMimeType=false"
