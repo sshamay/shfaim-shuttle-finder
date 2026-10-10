@@ -419,6 +419,28 @@ class TestWalkingDistancesBrouter:
         )
         assert all(r["geometry"] == [[34.79123, 32.07471]] for r in results)
 
+    def test_brouter_elevation_triples_are_dropped_from_geometry(
+        self, stops_cache: Path, mocker
+    ) -> None:
+        """The real server answers [lon, lat, elevation]; the map wants pairs."""
+        self._patch_brouter(mocker)
+        payload = brouter_response(
+            400.0,
+            coordinates=[[34.792, 32.0747, 12.5], [34.7952, 32.0775, 14.25]],
+        )
+        mocker.patch.object(
+            find.httpx,
+            "AsyncClient",
+            return_value=_FakeGetClient(lambda r: _FakeGetResponse(payload)),
+        )
+        results = find.asyncio.run(
+            find.walking_distances((32.07, 34.79), find.load_stops())
+        )
+        assert all(
+            r["geometry"] == [[34.792, 32.0747], [34.7952, 32.0775]]
+            for r in results
+        )
+
     def test_zero_length_brouter_route_is_rejected(
         self, stops_cache: Path, mocker
     ) -> None:

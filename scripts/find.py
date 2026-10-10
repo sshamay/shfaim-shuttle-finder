@@ -602,8 +602,10 @@ async def _brouter_walk_m(
     if not meters:
         raise ValueError("brouter returned a zero-length route")
     coords = (features[0].get("geometry") or {}).get("coordinates") or None
+    # GeoJSON from BRouter carries [lon, lat, elevation] triples, but only the
+    # first two matter to the map; tolerate bare [lon, lat] too.
     geometry = (
-        [[round(float(lon), 5), round(float(lat), 5)] for lon, lat in coords]
+        [[round(float(pt[0]), 5), round(float(pt[1]), 5)] for pt in coords]
         if coords
         else None
     )

@@ -408,7 +408,10 @@ def brouter_response(
     distance_m: float, coordinates: list[list[float]] | None = None
 ) -> dict[str, Any]:
     """A minimal BRouter GeoJSON answer (metres under ``track-length``, a
-    string on the wire, and the drawable path under ``geometry.coordinates``)."""
+    string on the wire, and the drawable path under ``geometry.coordinates``).
+
+    The default path carries ``[lon, lat, elevation]`` triples, exactly as the
+    real server's ``format=geojson`` answers - only the first two are drawn."""
     return {
         "type": "FeatureCollection",
         "features": [
@@ -424,9 +427,9 @@ def brouter_response(
                     "coordinates": coordinates
                     if coordinates is not None
                     else [
-                        [34.7920, 32.0747],
-                        [34.7935, 32.0760],
-                        [34.7952, 32.0775],
+                        [34.7920, 32.0747, 12.5],
+                        [34.7935, 32.0760, 13.0],
+                        [34.7952, 32.0775, 14.25],
                     ],
                 },
             }
