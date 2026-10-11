@@ -115,18 +115,6 @@ def _ride_min_from_dist(dist_m: float | None) -> float | None:
         return None
     return round(mins, 1)
 
-    for record in by_line.values():
-        merged: dict[tuple, dict[str, Any]] = {}
-        for leg in record["directions"].values():
-            for stop in leg["stops"]:
-                key = (stop["name"], round(stop["lat"], 5), round(stop["lon"], 5))
-                merged.setdefault(key, stop)
-        record["stops"] = sorted(merged.values(), key=lambda s: s["name"] or "")
-        record["stop_count"] = len(record["stops"])
-
-    return [by_line[k] for k in sorted(by_line)]
-
-
 
 def build_line_records(
     routes: list[dict[str, Any]], stops_by_route: dict[str, list[dict[str, Any]]]

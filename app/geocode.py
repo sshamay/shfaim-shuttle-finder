@@ -672,19 +672,12 @@ _REGISTRY: dict[str, type[Geocoder]] = {
 _FALLBACK_ORDER = ["nominatim", "serpapi"]
 
 
+from app.config import load_dotenv  # noqa: E402
+
+
 def _load_dotenv() -> None:
-    """Read .env into os.environ without overriding real env vars."""
-    env_path = Path(config.BASE_DIR) / ".env"
-    if not env_path.exists():
-        return
-    for raw in env_path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key, value = key.strip(), value.strip()
-        if value and key not in os.environ:
-            os.environ[key] = value
+    """Backward compatible re-export of config.load_dotenv."""
+    load_dotenv()
 
 
 def get_geocoder(which: str | None = None) -> Geocoder:

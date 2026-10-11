@@ -13,6 +13,8 @@ from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
+import json  # noqa: E402
+
 from app import config, geocode  # noqa: E402
 from scripts import find  # noqa: E402
 
@@ -62,8 +64,6 @@ async def geocode_error_handler(_request, exc: geocode.GeocodeError) -> JSONResp
 
 @app.get("/api/lines")
 async def api_lines() -> dict[str, Any]:
-    import json
-
     if not config.STOPS_CACHE.exists():
         raise HTTPException(503, "stops not fetched yet, run scripts/fetch_lines.py")
     payload = json.loads(config.STOPS_CACHE.read_text())

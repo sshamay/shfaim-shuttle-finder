@@ -84,7 +84,7 @@ else:
 VALHALLA_PROBE_TIMEOUT_S = 10.0
 
 
-def _load_dotenv() -> None:
+def load_dotenv() -> None:
     """Read .env into os.environ without overriding real env vars."""
     env_path = BASE_DIR / ".env"
     if not env_path.exists():
@@ -106,5 +106,5 @@ def ors_api_key() -> str:
     either way; Render sets the value from the dashboard (render.yaml keeps it
     out of sync).
     """
-    _load_dotenv()
+    load_dotenv()
     return os.environ.get("OPENROUTESERVICE_API_KEY", "").strip()

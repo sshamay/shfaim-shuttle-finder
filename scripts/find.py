@@ -97,14 +97,6 @@ def load_stops() -> list[dict[str, Any]]:
                     number -= shift
                 entry["stop_numbers"][line["line"]] = number
 
-    for stop in merged.values():
-        stop["ride_min"] = stop.get("ride_min")
-        stop["return_min"] = stop.get("return_min")
-        for line in stop["lines"]:
-            if "ride_min" in stop:
-                continue
-        # compute from dist if present? not stored; skip
-
     return list(merged.values())
 
 
@@ -330,63 +322,104 @@ def _probe_outcome(
         }
 
 
-def routing_status() -> dict[str, Any]:
-    """Live health report over every routing backend, for debugging deploys.
-
-    Probes each candidate exactly the way ``_pick_router`` would, but without
-    touching the shared verdict cache, and reports which backend would win.
-    The API key itself is never included - only whether one is configured -
-    so the endpoint is safe to leave public.
-    """
-    key = config.ors_api_key()
-    candidates = [
-        _probe_outcome(
+def _probe_candidate(spec: dict[str, Any]) -> dict[str, Any]:
+    kind = spec["kind"]
+    if kind == "valhalla":
+        return _probe_outcome(
             "valhalla",
-            base,
-            base,
+            spec["route_url"],
+            spec["probe_url"],
             headers=_valhalla_headers(),
             post_json=_valhalla_probe_payload(),
             body_check=_valhalla_has_route,
         )
-        for base in config.VALHALLA_URLS
-    ]
-    lon1, lat1, lon2, lat2 = _PROBE_WALK
-    ors_probe = _ors_directions_url(
-        config.OPENROUTESERVICE_URL, lon1, lat1, lon2, lat2
-    )
-    if config.BROUTER_IS_SELF_HOSTED:
-        candidates.append(_brouter_outcome(config.BROUTER_URL))
-    if key:
-        candidates.append(
-            _probe_outcome(
-                "ors",
-                config.OPENROUTESERVICE_URL,
-                ors_probe,
-                headers={"Authorization": key},
-            )
-        )
-    else:
-        candidates.append(
-            {
+    if kind == "brouter":
+        return _brouter_outcome(spec["route_url"])
+    if kind == "ors":
+        key = config.ors_api_key()
+        if not key:
+            lon1, lat1, lon2, lat2 = _PROBE_WALK
+            return {
                 "kind": "ors",
-                "route_url": config.OPENROUTESERVICE_URL,
-                "probe_url": ors_probe,
+                "route_url": spec["route_url"],
+                "probe_url": _ors_directions_url(spec["route_url"], lon1, lat1, lon2, lat2),
                 "ok": False,
                 "http_status": None,
                 "latency_ms": 0,
                 "skipped": True,
                 "error": "OPENROUTESERVICE_API_KEY is not set",
             }
+        return _probe_outcome(
+            "ors",
+            spec["route_url"],
+            spec["probe_url"],
+            headers={"Authorization": key},
         )
-    if not config.BROUTER_IS_SELF_HOSTED:
-        candidates.append(_brouter_outcome(config.BROUTER_URL))
+    return {
+        "kind": kind,
+        "route_url": spec.get("route_url"),
+        "probe_url": spec.get("probe_url"),
+        "ok": False,
+        "http_status": None,
+        "latency_ms": 0,
+        "skipped": True,
+        "error": "unknown",
+    }
 
+def _iter_candidate_specs() -> list[dict[str, Any]]:
+    """Return candidate probe specifications in canonical order (no probing)."""
+    specs: list[dict[str, Any]] = []
+    for base in config.VALHALLA_URLS:
+        specs.append(
+            {
+                "kind": "valhalla",
+                "route_url": base,
+                "probe_url": base,
+                "type": "valhalla",
+            }
+        )
+    if config.BROUTER_IS_SELF_HOSTED:
+        specs.append(
+            {
+                "kind": "brouter",
+                "route_url": config.BROUTER_URL,
+                "probe_url": None,
+                "type": "brouter",
+            }
+        )
+    key = config.ors_api_key()
+    lon1, lat1, lon2, lat2 = _PROBE_WALK
+    ors_probe = _ors_directions_url(
+        config.OPENROUTESERVICE_URL, lon1, lat1, lon2, lat2
+    )
+    specs.append(
+        {
+            "kind": "ors",
+            "route_url": config.OPENROUTESERVICE_URL,
+            "probe_url": ors_probe,
+            "type": "ors",
+            "has_key": bool(key),
+        }
+    )
+    if not config.BROUTER_IS_SELF_HOSTED:
+        specs.append(
+            {
+                "kind": "brouter",
+                "route_url": config.BROUTER_URL,
+                "probe_url": None,
+                "type": "brouter",
+            }
+        )
+    return specs
+
+
+def routing_status() -> dict[str, Any]:
+    """Live health report over every routing backend, for debugging deploys."""
+    key = config.ors_api_key()
+    candidates = [_probe_candidate(s) for s in _iter_candidate_specs()]
     return {
         "key_configured": bool(key),
         "key_length": len(key),
-        # Same order as _pick_router: first Valhalla host that answers, then
-        # BRouter when it is self-hosted, then ORS once its key is set and it
-        # answers, then the public BRouter server as the strict last resort.
         "would_pick": next((c["route_url"] for c in candidates if c["ok"]), None),
         "cached": {
             "router": _ROUTER_CACHE,
@@ -424,27 +457,11 @@ def _pick_router() -> str | None:
         return _ROUTER_CACHE
 
     found: str | None = None
-    for base in config.VALHALLA_URLS:
-        outcome = _probe_outcome(
-            "valhalla",
-            base,
-            base,
-            headers=_valhalla_headers(),
-            post_json=_valhalla_probe_payload(),
-            body_check=_valhalla_has_route,
-        )
-        if outcome["ok"]:
-            found = base
+    for spec in _iter_candidate_specs():
+        c = _probe_candidate(spec)
+        if c["ok"]:
+            found = c["route_url"]
             break
-    if found is None and config.BROUTER_IS_SELF_HOSTED:
-        if _brouter_outcome(config.BROUTER_URL)["ok"]:
-            found = config.BROUTER_URL
-    if found is None and config.ors_api_key():
-        if _ors_answers(config.OPENROUTESERVICE_URL):
-            found = config.OPENROUTESERVICE_URL
-    if found is None and not config.BROUTER_IS_SELF_HOSTED:
-        if _brouter_outcome(config.BROUTER_URL)["ok"]:
-            found = config.BROUTER_URL
 
     _ROUTER_CACHE = found
     _ROUTER_CHECKED_AT = now
