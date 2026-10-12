@@ -198,6 +198,11 @@ function render(data) {
       <div class="ride">${rideHtml}</div>
     </div>`;
   heName(winner.querySelector(".meta"), best.name_he);
+  winner.style.cursor = "pointer";
+  winner.addEventListener("click", () => {
+    drawWalkLine(best.geometry);
+    winner.scrollIntoView({ block: "nearest" });
+  }, { once: false });
   resultEl.hidden = false;
   // A fresh search always comes back expanded with a current one-liner ready
   // for the collapse pill and a reset toggle.
