@@ -738,6 +738,54 @@ class TestFallbackChainAdvances:
         assert called == ["photon", "nominatim", "serpapi"]
         assert results[0]["housenumber"] == "34"
 
+    def test_an_address_google_knows_but_osm_does_not_wins(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reported bug: "ביאליק 127 רמת גן" is a real house OSM has no node for.
+
+        Photon and Nominatim know only the street, so the chain has to keep
+        going to Google's fallback, whose address string carries the number.
+        """
+        _no_keys(monkeypatch)
+        import asyncio
+
+        monkeypatch.setenv("SERPAPI_API_KEY", "secret-key-value")
+        called: list[str] = []
+
+        async def photon(self, query, *, limit=5):
+            called.append("photon")
+            return [
+                _answer(
+                    label="Bialik, Ramat Gan", street="Zeev Jabotinsky",
+                    city="Ramat Gan", lat=32.087, lon=34.81,
+                )
+            ]
+
+        async def nominatim(self, query, *, limit=5):
+            called.append("nominatim")
+            return [_answer(label="Bialik, Ramat Gan", city="Ramat Gan", lat=32.087, lon=34.81)]
+
+        async def serpapi(self, query, *, limit=5):
+            called.append("serpapi")
+            return [
+                _answer(
+                    label="Bialik St 127", street="Bialik St 127, Ramat Gan",
+                    housenumber="127", city="Ramat Gan", lat=32.0883422, lon=34.8033664,
+                )
+            ]
+
+        for cls, fn in (
+            (geocode.PhotonGeocoder, photon),
+            (geocode.NominatimGeocoder, nominatim),
+            (geocode.SerpApiGeocoder, serpapi),
+        ):
+            monkeypatch.setattr(cls, "search", fn)
+
+        results = asyncio.run(geocode.search("ביאליק 127 רמת גן"))
+        assert called == ["photon", "nominatim", "serpapi"]
+        assert results[0]["label"] == "Bialik St 127"
+        assert results[0]["housenumber"] == "127"
+
     def test_best_partial_result_survives_when_the_rest_fail(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -875,6 +923,17 @@ _MODERN_PLACE = {
     }
 }
 
+# A real serpapi.com answer for "ביאליק 127 רמת גן": Google knows the house
+# number OSM lacks, but reports it only inside the address string.
+_SERP_ADDRESS = {
+    "place_results": {
+        "title": "Bialik St 127",
+        "address": "Bialik St 127, Ramat Gan",
+        "gps_coordinates": {"latitude": 32.0883422, "longitude": 34.8033664},
+        "place_id": "ChIJyXhflsZLHRURiVKFNoJBy74",
+    }
+}
+
 
 class TestSerpApiParse:
     """Parsing real SerpAPI payloads, which used to be untested.
@@ -958,6 +1017,28 @@ class TestSerpApiParse:
         monkeypatch.setattr(geocode.httpx, "AsyncClient", _serpapi_client(payload))
         with pytest.raises(geocode.GeocodeError, match="quota message"):
             asyncio.run(geocode.SerpApiGeocoder("secret-key-value").search("Azrieli"))
+
+    def test_address_house_number_is_split_out_and_resolves(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Google's address string carries the number OSM has nowhere else.
+
+        "ביאליק 127 רמת גן" is a real address missing from OSM, so Photon and
+        Nominatim return only the street. Google finds it, but reports the
+        number inside the address ("Bialik St 127, Ramat Gan"), so it only
+        counts as an answer once the number is parsed back out.
+        """
+        import asyncio
+
+        monkeypatch.setattr(geocode.httpx, "AsyncClient", _serpapi_client(_SERP_ADDRESS))
+        results = asyncio.run(
+            geocode.SerpApiGeocoder("secret-key-value").search("ביאליק 127 רמת גן", limit=6)
+        )
+
+        assert len(results) == 1
+        assert results[0]["housenumber"] == "127"
+        assert results[0]["label"] == "Bialik St 127"
+        assert geocode._resolves(results, "127") is True
 
 
 def _answer(
@@ -1106,6 +1187,42 @@ class TestAddressCorrection:
         assert len(sent) == 2
         assert results
         assert results[0]["city"] == "Holon"
+
+    def test_a_shared_name_does_not_hijack_the_street(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reported bug: "ביאליק 127 רמת גן" corrected onto Zeev Jabotinsky.
+
+        Photon knows a "Bialik" road (the street that was typed) and a "Bialik"
+        LRT stop sitting on Zeev Jabotinsky. The correction used to take the
+        stop's containing street, silently rewinding the address onto the wrong
+        road; the road's own name is the canonical spelling.
+        """
+        import asyncio
+
+        def bialik_road(osm_id: int = 21) -> dict:
+            return photon_feature(
+                name="Bialik", city="Ramat Gan", osm_value="tertiary",
+                lat=32.0863, lon=34.8094, osm_id=osm_id,
+            )
+
+        def bialik_stop() -> dict:
+            return photon_feature(
+                name="Bialik", city="Ramat Gan", osm_value="station",
+                street="Zeev Jabotinsky", lat=32.0883, lon=34.8040, osm_id=22,
+            )
+
+        by_query = {
+            "ביאליק 127 רמת גן": [bialik_road(), bialik_stop()],
+            "ביאליק": [bialik_road(), bialik_stop()],
+            "Bialik 127 רמת גן": [bialik_road()],
+        }
+
+        _, sent = asyncio.run(
+            _canned_search(monkeypatch, "ביאליק 127 רמת גן", by_query)
+        )
+
+        assert sent == ["ביאליק 127 רמת גן", "ביאליק", "Bialik 127 רמת גן"]
 
 
 class TestAddressParsing:

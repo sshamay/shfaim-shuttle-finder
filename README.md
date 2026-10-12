@@ -254,11 +254,13 @@ behaviour:
 ## Optional: third-party geocoders
 
 Photon handles most addresses. For tricky ones you can set `SERPAPI_API_KEY`
-in `.env` (third fallback, 250 queries/month, good for named places, weak on
-raw addresses) or `GOOGLE_MAPS_API_KEY` (stronger, bills per request). Neither
-is required. Both are reached only after the earlier geocoders failed to pin
-the address down, which is rare: a query that has no house number stops at
-Photon, and one that does is settled by Photon's own correction first.
+in `.env` (third fallback, 250 queries/month, good for named places; it can
+also pin a raw address OSM lacks, e.g. "ביאליק 127 רמת גן", by reporting the
+number inside its address string) or `GOOGLE_MAPS_API_KEY` (stronger, bills per
+request). Neither is required. Both are reached only after the earlier
+geocoders failed to pin the address down, which is rare: a query that has no
+house number stops at Photon, and one that does is settled by Photon's own
+correction first.
 
 `.env` is gitignored. Treat the API keys as secrets: a key committed or pasted
 in a screenshot should be rotated.

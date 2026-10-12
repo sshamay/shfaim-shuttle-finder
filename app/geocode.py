@@ -77,6 +77,25 @@ NOISE_TYPES = {
 # building it sits in but is not what the caller asked for.
 ADDRESS_TYPES = {"house", "building", "house_number", "apartments", "residential"}
 
+# OSM highway values that are a street rather than a place. When a query names
+# one of these, its own name is the canonical street: a POI that merely shares
+# the name (the "Bialik" LRT stop on Zeev Jabotinsky) must not redirect the
+# address to the street it happens to sit on.
+ROAD_TYPES = {
+    "motorway",
+    "trunk",
+    "primary",
+    "secondary",
+    "tertiary",
+    "unclassified",
+    "residential",
+    "living_street",
+    "pedestrian",
+    "service",
+    "road",
+    "secondary_road",
+}
+
 # Cities named in the query or in OSM's address fields, and their aliases.
 CITY_ALIASES = {
     "tel aviv": "tel aviv",
@@ -203,6 +222,13 @@ class PhotonGeocoder(Geocoder):
     async def _canonical_street(self, head: str, limit: int) -> str:
         """The street name Photon would have used had the query spelled it right."""
         candidates = [self._to_result(f) for f in await self._fetch(head, limit)]
+        # A road the head already names is its own canonical spelling. Without
+        # this a POI sharing the name but sitting elsewhere (the "Bialik" LRT
+        # stop on Zeev Jabotinsky) hijacks the address onto that other street,
+        # which is how "ביאליק 127 רמת גן" became "Zeev Jabotinsky 127".
+        for candidate in candidates:
+            if candidate["type"] in ROAD_TYPES and candidate["name"]:
+                return candidate["name"]
         for pool in (
             [c for c in candidates if not c["out_of_area"] and c["type"] not in NOISE_TYPES],
             [c for c in candidates if not c["out_of_area"]],
@@ -228,6 +254,7 @@ class PhotonGeocoder(Geocoder):
         parts = [p for p in (heading, city, props.get("state"), props.get("country")) if p]
         return {
             "label": ", ".join(dict.fromkeys(parts)) or props.get("name", "unknown"),
+            "name": props.get("name") or "",
             "street": props.get("street") or "",
             "housenumber": props.get("housenumber") or "",
             "city": city,
@@ -299,8 +326,11 @@ class SerpApiGeocoder(Geocoder):
     """Third fallback. Real Google Maps data, needs SERPAPI_API_KEY.
 
     A business/POI search rather than an address geocoder, so plain street
-    addresses may return nothing. Fires only when photon and nominatim are
-    both empty, which keeps it well inside the free monthly quota.
+    addresses may return nothing. When it does answer with an address it can
+    carry a house number OSM has no node for ("Bialik St 127, Ramat Gan"), and
+    ``_as_result`` parses that number back out so the chain can settle on it.
+    Fires only after photon and nominatim give up, which keeps it well inside
+    the free monthly quota.
     """
 
     name = "serpapi"
@@ -359,12 +389,20 @@ class SerpApiGeocoder(Geocoder):
         types = item.get("type") or item.get("type_ids") or []
         if isinstance(types, list):
             types = types[0] if types else ""
+        address = item.get("address") or ""
+        number = _trailing_house_number(item.get("title") or "") or _trailing_house_number(address)
+        # A place_results entry with no business type but a house number in its
+        # address is the address itself, not a venue, so mark it up as a
+        # building: that is what lets `_resolves` recognise the number Google
+        # found even when OSM has no such house ("Bialik 127, Ramat Gan").
+        if not types and number:
+            types = "house"
         lat = float(gps["latitude"])
         lon = float(gps["longitude"])
         return {
             "label": item.get("title") or query,
-            "street": item.get("address") or "",
-            "housenumber": "",
+            "street": address,
+            "housenumber": number,
             "city": "",
             "lat": lat,
             "lon": lon,
@@ -454,6 +492,20 @@ def _city_of(item: dict[str, Any]) -> set[str]:
 
 
 _HOUSE_NUMBER = re.compile(r"^\d+[א-ת]?$")
+
+
+def _trailing_house_number(text: str) -> str:
+    """The house number ending an address's street part, e.g. "Bialik St 127".
+
+    SerpAPI hands back a whole address string with no separate number field,
+    so the chain's "did we find the number that was asked for" test cannot see
+    it until it is split back out.
+    """
+    street = (text or "").split(",")[0].strip()
+    tokens = street.split()
+    if tokens and _HOUSE_NUMBER.match(tokens[-1]):
+        return tokens[-1]
+    return ""
 
 
 def _parse_address(query: str) -> tuple[str, str, str] | None:
