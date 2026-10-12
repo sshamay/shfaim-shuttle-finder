@@ -275,14 +275,22 @@ class TestNearestEndpoint:
         for stop in body["stops"]:
             assert stop["geometry"] == geometry, "every stop draws its own walk"
 
-    def test_line_rows_omit_geometry_to_keep_the_payload_small(
+    def test_line_rows_carry_walk_geometry_so_the_row_redraws_the_walk(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Line rows are text-only; the path rides on the stop payloads once."""
+        """Every "Other lines" row is clickable, so it must hold its path.
+
+        A line's closest stop can sit beyond the top-five nearby stops, so the
+        frontend cannot always look the geometry up elsewhere; only a handful
+        of lines exist, so repeating it here is cheap.
+        """
         _mock_ors(monkeypatch)
         body = client.get("/api/nearest", params={"lat": 32.0747, "lon": 34.7920}).json()
+        geometry = body["best_stop"]["geometry"]
         for entry in body["lines"]:
-            assert entry["stop"]["geometry"] is None
+            if entry["stop"]["is_estimate"]:
+                continue
+            assert entry["stop"]["geometry"] == geometry, "row must draw its walk"
 
     def test_valhalla_results_carry_walk_geometry(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch

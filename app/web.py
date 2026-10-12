@@ -106,9 +106,10 @@ async def api_nearest(lat: float, lon: float) -> dict[str, Any]:
                 # This line's own number for its closest stop, which can differ
                 # from the same stop's number on another line.
                 "stop_no": e["stop_no"],
-                # Line rows only display text; the drawn walk comes from the
-                # best_stop/stops payloads above, so this copy omits it.
-                "stop": _stop_payload(e["best_stop"], include_geometry=False),
+                # Each line row is clickable and redraws its own walk, so it
+                # carries its stop's geometry. There are at most a handful of
+                # lines, so the repetition next to `stops` is small.
+                "stop": _stop_payload(e["best_stop"], include_geometry=True),
             }
             for e in result["lines"]
         ],

@@ -226,12 +226,6 @@ function render(data) {
   data.lines.forEach((entry) => {
     routeName[entry.line] = entry.name;
   });
-  // Line rows omit geometry to keep the payload small, so look a row's walk up
-  // by its stop's coordinates in the payloads that do carry one (the winner and
-  // the nearby stops). Without this, clicking an "Other lines" row draws nothing.
-  const geometryByStop = new Map();
-  data.stops.forEach((s) => geometryByStop.set(`${s.lat},${s.lon}`, s.geometry));
-  if (best) geometryByStop.set(`${best.lat},${best.lon}`, best.geometry);
   // The winner card already shows the best stop and every line it serves, so
   // those lines' rows in "Other lines" would be duplicates. A line whose
   // closest stop is that same physical stop (same coordinates) is skipped.
@@ -249,7 +243,7 @@ function render(data) {
       );
       tr.style.cursor = "pointer";
       tr.addEventListener("click", () => {
-        drawWalkLine(geometryByStop.get(`${entry.stop.lat},${entry.stop.lon}`));
+        drawWalkLine(entry.stop.geometry);
         tr.scrollIntoView({ block: "nearest" });
       });
       linesTbody.appendChild(tr);
