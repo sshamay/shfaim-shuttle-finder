@@ -226,8 +226,7 @@ function render(data) {
   // closest stop is that same physical stop (same coordinates) is skipped.
   data.lines.forEach((entry) => {
     if (entry.stop.lat === best.lat && entry.stop.lon === best.lon) return;
-    linesTbody.append(
-      resultRow(
+      const tr = resultRow(
         entry.line,
         entry.name,
         entry.stop,
@@ -236,8 +235,13 @@ function render(data) {
         stopNoLabel(entry.stop, entry.line),
         entry.best_ride_min,
         entry.best_return_min
-      )
-    );
+      );
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", () => {
+        drawWalkLine(entry.stop.geometry);
+        tr.scrollIntoView({ block: "nearest" });
+      });
+      linesTbody.appendChild(tr);
   });
   // No alternative lines left when the winner is the only stop in range:
   // empty tables under a header would just look broken.
@@ -267,8 +271,13 @@ function render(data) {
         stop.ride_min,
         stop.return_min
       );
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", () => {
+        drawWalkLine(stop.geometry);
+        tr.scrollIntoView({ block: "nearest" });
+      });
       if (!firstRowForStop.has(i)) firstRowForStop.set(i, tr);
-      stopsTbody.append(tr);
+      stopsTbody.appendChild(tr);
     });
   });
 
