@@ -1550,3 +1550,65 @@ class TestCorrectedBonus:
         assert plain[0]["street"] == "Yaakov Reifman"
         assert boosted[0]["street"] == "Marcel Janco"
         assert [r["street"] for r in boosted] == ["Marcel Janco", "Yaakov Reifman"]
+
+
+class TestNumberPunctuation:
+    """"דרך מנחם בגין 154״" resolving to a street in Petah Tikva.
+
+    Hebrew addresses are typed with a gershayim or geresh still attached to the
+    house number, and "154״" is not a house number any more: the address chain
+    treated the query as a place name, accepted Photon's first non-empty reply,
+    and returned the wrong city's Menachem Begin street.
+    """
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "דרך מנחם בגין 154״",
+            "דרך מנחם בגין 154׳",
+            "ביאליק 127'",
+            'דיזנגוף 34"',
+            "Marcel Janco 10`",
+        ],
+    )
+    def test_a_quote_on_the_number_is_not_part_of_the_address(
+        self, query: str
+    ) -> None:
+        parsed = geocode._parse_address(query)
+        assert parsed is not None
+        assert parsed[0].isdigit()
+        assert parsed[0] in geocode._normalize_number_punct(query)
+
+    def test_the_abbreviation_geresh_is_left_alone(self) -> None:
+        """"שד'" is an abbreviation mark, not punctuation on a number."""
+        quoted = "שד' שאול המלך"
+        assert geocode._normalize_number_punct(quoted) == quoted
+        assert geocode._parse_address(quoted) is None
+
+    def test_the_number_on_its_own_is_still_not_an_address(self) -> None:
+        assert geocode._parse_address("811") is None
+
+    def test_the_quoted_number_reaches_the_geocoder_unquoted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One request, already cleaned, and it resolves the house.
+
+        The point of cleaning at the top of search() rather than deep inside
+        _parse_address() is that Photon is asked the question that can be
+        answered: the quote is gone before the first request is built.
+        """
+        _no_keys(monkeypatch)
+        import asyncio
+
+        asked: list[str] = []
+
+        async def photon(self, query, *, limit=5):
+            asked.append(query)
+            return [_house("154")]
+
+        monkeypatch.setattr(geocode.PhotonGeocoder, "search", photon)
+
+        results = asyncio.run(geocode.search("דרך מנחם בגין 154״"))
+
+        assert asked == ["דרך מנחם בגין 154"]
+        assert results[0]["housenumber"] == "154"

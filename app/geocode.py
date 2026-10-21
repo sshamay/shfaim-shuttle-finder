@@ -493,6 +493,23 @@ def _city_of(item: dict[str, Any]) -> set[str]:
 
 _HOUSE_NUMBER = re.compile(r"^\d+[א-ת]?$")
 
+# A quote or gershayim glued to a house number: "154״", "127'", "10\"". Hebrew
+# street addresses are typed with the mark still attached, and a number so
+# decorated stops matching _HOUSE_NUMBER, which turns a real address into
+# something that looks like a place name and ends the search after the first
+# geocoder answers. Only characters touching a digit are stripped, so the
+# geresh in "שד' שאול המלך" - an abbreviation mark, not punctuation on a
+# number - survives untouched.
+_NUMBER_PUNCT = re.compile(
+    r"(?<=\d)[\u05f3\u05f4\u2018\u2019\u201c\u201d'\u0022`]+"
+    r"|[\u05f3\u05f4\u2018\u2019\u201c\u201d'\u0022`]+(?=\d)"
+)
+
+
+def _normalize_number_punct(query: str) -> str:
+    """The query with quote marks removed from around its house numbers."""
+    return _NUMBER_PUNCT.sub("", query or "")
+
 
 def _trailing_house_number(text: str) -> str:
     """The house number ending an address's street part, e.g. "Bialik St 127".
@@ -514,9 +531,10 @@ def _parse_address(query: str) -> tuple[str, str, str] | None:
     Only queries with a standalone number after at least one word count as an
     address, so "Azrieli Center" and "10", the bus line, are left alone.
     Commas are treated as spacing: "Marcel Janco 10, Tel Aviv" is one address
-    with a tail, not two queries.
+    with a tail, not two queries. A quote mark on the number ("154״") is
+    punctuation rather than part of the address and is dropped first.
     """
-    tokens = query.replace(",", " ").split()
+    tokens = _normalize_number_punct(query).replace(",", " ").split()
     for i, token in enumerate(tokens):
         if not _HOUSE_NUMBER.match(token):
             continue
@@ -766,6 +784,10 @@ async def search(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
     SERPAPI_API_KEY) is skipped with an explanatory note rather than being
     fatal, so a missing optional key never stops the primary from being tried.
     """
+    # Normalised once, up here, so the geocoders are asked the cleaned
+    # question and every check below - does an answer resolve the house
+    # number, does it cover every word - judges the same string.
+    query = _normalize_number_punct(query)
     primary = get_geocoder()
     order = [primary]
     errors: list[str] = []
