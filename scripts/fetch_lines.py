@@ -170,13 +170,44 @@ def build_line_records(
     return [by_line[k] for k in sorted(by_line)]
 
 
-def save(records: list[dict[str, Any]]) -> None:
+def carry_over_schedule(
+    records: list[dict[str, Any]], previous: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Real timetable minutes survive a stops re-fetch.
+
+    The ride/return minutes built above are a 50 km/h guess off the road
+    distance. scripts/fetch_schedule.py replaces that guess with the operator's
+    scheduled times, so when the cache being rewritten already carried a
+    schedule the same stop codes keep the numbers they had instead of quietly
+    falling back to the estimate.
+    """
+    if not previous or not previous.get("schedule_fetched_at"):
+        return None
+    known: dict[tuple[str, str], tuple[Any, Any]] = {}
+    for line in previous.get("lines", []):
+        for stop in line.get("stops", []):
+            known[(line.get("line"), str(stop.get("code")))] = (
+                stop.get("ride_min"),
+                stop.get("return_min"),
+            )
+    for rec in records:
+        for stop in rec.get("stops", []):
+            values = known.get((rec.get("line"), str(stop.get("code"))))
+            if values is not None:
+                stop["ride_min"], stop["return_min"] = values
+    return {"schedule_fetched_at": previous["schedule_fetched_at"]}
+
+
+def save(
+    records: list[dict[str, Any]], schedule: dict[str, Any] | None = None
+) -> None:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "source": config.SITE_URL,
         "lines": records,
     }
+    payload.update(schedule or {})
     config.STOPS_CACHE.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
@@ -187,6 +218,13 @@ def main() -> int:
     if not force and cache_is_fresh():
         print(f"cache is fresh: {config.STOPS_CACHE}")
         return 0
+
+    previous = None
+    if config.STOPS_CACHE.exists():
+        try:
+            previous = json.loads(config.STOPS_CACHE.read_text())
+        except (OSError, ValueError):
+            previous = None
 
     if api_only:
         # Skipping the browser: cloud builds (Render, Docker) have no Playwright
@@ -207,7 +245,10 @@ def main() -> int:
         print("no Shefayim lines found in the response", file=sys.stderr)
         return 1
 
-    save(records)
+    schedule = carry_over_schedule(records, previous)
+    if schedule:
+        print("kept the stored timetable minutes")
+    save(records, schedule)
     for rec in records:
         print(f"line {rec['line']:>3} {rec['name']:<16} {rec['stop_count']} stops")
     print(f"total {sum(r['stop_count'] for r in records)} stops -> {config.STOPS_CACHE}")

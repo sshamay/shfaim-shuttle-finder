@@ -248,8 +248,8 @@
           "index": 4,
           "is_park_and_ride": false,
           "dist_from_orig_m": 17361,
-          "ride_min": 20.8,
-          "return_min": 25.5
+          "ride_min": 20.0,
+          "return_min": 21.5
         },
         {
           "stop_id": 13239,
@@ -261,8 +261,8 @@
           "index": 8,
           "is_park_and_ride": false,
           "dist_from_orig_m": 18841,
-          "ride_min": 22.6,
-          "return_min": 18.0
+          "ride_min": 24.5,
+          "return_min": 17.0
         },
         {
           "stop_id": 12946,
@@ -274,8 +274,8 @@
           "index": 7,
           "is_park_and_ride": false,
           "dist_from_orig_m": 18623,
-          "ride_min": 22.3,
-          "return_min": 18.5
+          "ride_min": 23.5,
+          "return_min": 18.0
         },
         {
           "stop_id": 51284,
@@ -287,8 +287,8 @@
           "index": 2,
           "is_park_and_ride": false,
           "dist_from_orig_m": 16083,
-          "ride_min": 19.3,
-          "return_min": 31.0
+          "ride_min": 16.5,
+          "return_min": 25.0
         },
         {
           "stop_id": 13635,
@@ -300,8 +300,8 @@
           "index": 6,
           "is_park_and_ride": false,
           "dist_from_orig_m": 17984,
-          "ride_min": 21.6,
-          "return_min": 22.0
+          "ride_min": 22.5,
+          "return_min": 19.2
         },
         {
           "stop_id": 51733,
@@ -314,7 +314,7 @@
           "is_park_and_ride": true,
           "dist_from_orig_m": 0,
           "ride_min": 0.0,
-          "return_min": 48.0
+          "return_min": 41.5
         },
         {
           "stop_id": 51814,
@@ -326,7 +326,7 @@
           "index": 9,
           "is_park_and_ride": false,
           "dist_from_orig_m": 35495,
-          "ride_min": 42.6,
+          "ride_min": 41.5,
           "return_min": 0.0
         },
         {
@@ -339,8 +339,8 @@
           "index": 5,
           "is_park_and_ride": false,
           "dist_from_orig_m": 17596,
-          "ride_min": 21.1,
-          "return_min": 24.0
+          "ride_min": 21.0,
+          "return_min": 20.5
         },
         {
           "stop_id": 14549,
@@ -352,8 +352,8 @@
           "index": 3,
           "is_park_and_ride": false,
           "dist_from_orig_m": 17006,
-          "ride_min": 20.4,
-          "return_min": 27.0
+          "ride_min": 19.0,
+          "return_min": 22.5
         }
       ],
       "stop_count": 9
@@ -604,8 +604,8 @@
           "index": 4,
           "is_park_and_ride": false,
           "dist_from_orig_m": 15527,
-          "ride_min": 18.6,
-          "return_min": 20.0
+          "ride_min": 15.0,
+          "return_min": 17.0
         },
         {
           "stop_id": 12918,
@@ -617,8 +617,8 @@
           "index": 5,
           "is_park_and_ride": false,
           "dist_from_orig_m": 15811,
-          "ride_min": 19.0,
-          "return_min": 18.0
+          "ride_min": 15.5,
+          "return_min": 16.5
         },
         {
           "stop_id": 13919,
@@ -630,8 +630,8 @@
           "index": 6,
           "is_park_and_ride": false,
           "dist_from_orig_m": 16041,
-          "ride_min": 19.2,
-          "return_min": 16.0
+          "ride_min": 16.5,
+          "return_min": 15.5
         },
         {
           "stop_id": 14536,
@@ -643,8 +643,8 @@
           "index": 3,
           "is_park_and_ride": false,
           "dist_from_orig_m": 15205,
-          "ride_min": 18.2,
-          "return_min": 21.0
+          "ride_min": 13.5,
+          "return_min": 18.5
         },
         {
           "stop_id": 29325,
@@ -656,8 +656,8 @@
           "index": 8,
           "is_park_and_ride": false,
           "dist_from_orig_m": 16848,
-          "ride_min": 20.2,
-          "return_min": 13.0
+          "ride_min": 18.5,
+          "return_min": 13.5
         },
         {
           "stop_id": 52234,
@@ -670,7 +670,7 @@
           "is_park_and_ride": true,
           "dist_from_orig_m": 0,
           "ride_min": 0.0,
-          "return_min": 48.0
+          "return_min": 32.0
         },
         {
           "stop_id": 51917,
@@ -682,7 +682,7 @@
           "index": 9,
           "is_park_and_ride": false,
           "dist_from_orig_m": 32227,
-          "ride_min": 38.7,
+          "ride_min": 32.0,
           "return_min": 0.0
         },
         {
@@ -695,8 +695,8 @@
           "index": 7,
           "is_park_and_ride": false,
           "dist_from_orig_m": 16613,
-          "ride_min": 19.9,
-          "return_min": 14.0
+          "ride_min": 17.5,
+          "return_min": 14.5
         },
         {
           "stop_id": 42858,
@@ -708,8 +708,8 @@
           "index": 2,
           "is_park_and_ride": false,
           "dist_from_orig_m": 14987,
-          "ride_min": 18.0,
-          "return_min": 22.0
+          "ride_min": 12.5,
+          "return_min": 19.2
         }
       ],
       "stop_count": 9
@@ -936,8 +936,8 @@
           "index": 3,
           "is_park_and_ride": false,
           "dist_from_orig_m": 17333,
-          "ride_min": 20.8,
-          "return_min": 24.0
+          "ride_min": 19.8,
+          "return_min": 22.5
         },
         {
           "stop_id": 48640,
@@ -949,7 +949,7 @@
           "index": 4,
           "is_park_and_ride": false,
           "dist_from_orig_m": 17577,
-          "ride_min": 21.1,
+          "ride_min": 20.2,
           "return_min": 22.0
         },
         {
@@ -962,8 +962,8 @@
           "index": 5,
           "is_park_and_ride": false,
           "dist_from_orig_m": 18032,
-          "ride_min": 21.6,
-          "return_min": 20.0
+          "ride_min": 22.0,
+          "return_min": 20.5
         },
         {
           "stop_id": 14370,
@@ -975,8 +975,8 @@
           "index": 6,
           "is_park_and_ride": false,
           "dist_from_orig_m": 18529,
-          "ride_min": 22.2,
-          "return_min": 17.0
+          "ride_min": 23.2,
+          "return_min": 19.0
         },
         {
           "stop_id": 49329,
@@ -988,8 +988,8 @@
           "index": 7,
           "is_park_and_ride": false,
           "dist_from_orig_m": 18832,
-          "ride_min": 22.6,
-          "return_min": 16.0
+          "ride_min": 24.5,
+          "return_min": 18.0
         },
         {
           "stop_id": 52234,
@@ -1002,7 +1002,7 @@
           "is_park_and_ride": true,
           "dist_from_orig_m": 0,
           "ride_min": 0.0,
-          "return_min": 48.0
+          "return_min": 42.5
         },
         {
           "stop_id": 51816,
@@ -1014,7 +1014,7 @@
           "index": 8,
           "is_park_and_ride": false,
           "dist_from_orig_m": 37568,
-          "ride_min": 45.1,
+          "ride_min": 42.5,
           "return_min": 0.0
         },
         {
@@ -1027,8 +1027,8 @@
           "index": 2,
           "is_park_and_ride": false,
           "dist_from_orig_m": 16836,
-          "ride_min": 20.2,
-          "return_min": 26.0
+          "ride_min": 18.0,
+          "return_min": 24.0
         }
       ],
       "stop_count": 8
@@ -1208,7 +1208,7 @@
           "is_park_and_ride": true,
           "dist_from_orig_m": 0,
           "ride_min": 0.0,
-          "return_min": 48.0
+          "return_min": 39.2
         },
         {
           "stop_id": 51964,
@@ -1220,7 +1220,7 @@
           "index": 6,
           "is_park_and_ride": false,
           "dist_from_orig_m": 37350,
-          "ride_min": 44.8,
+          "ride_min": 39.2,
           "return_min": 0.0
         },
         {
@@ -1233,8 +1233,8 @@
           "index": 2,
           "is_park_and_ride": false,
           "dist_from_orig_m": 17214,
-          "ride_min": 20.7,
-          "return_min": 22.0
+          "ride_min": 19.0,
+          "return_min": 20.5
         },
         {
           "stop_id": 13092,
@@ -1246,8 +1246,8 @@
           "index": 4,
           "is_park_and_ride": false,
           "dist_from_orig_m": 18197,
-          "ride_min": 21.8,
-          "return_min": 18.0
+          "ride_min": 22.0,
+          "return_min": 17.5
         },
         {
           "stop_id": 13128,
@@ -1259,8 +1259,8 @@
           "index": 3,
           "is_park_and_ride": false,
           "dist_from_orig_m": 17666,
-          "ride_min": 21.2,
-          "return_min": 21.0
+          "ride_min": 20.2,
+          "return_min": 19.0
         },
         {
           "stop_id": 13328,
@@ -1272,8 +1272,8 @@
           "index": 5,
           "is_park_and_ride": false,
           "dist_from_orig_m": 18892,
-          "ride_min": 22.7,
-          "return_min": 15.0
+          "ride_min": 23.2,
+          "return_min": 16.0
         }
       ],
       "stop_count": 6
@@ -1525,7 +1525,7 @@
           "is_park_and_ride": true,
           "dist_from_orig_m": 0,
           "ride_min": 0.0,
-          "return_min": 48.0
+          "return_min": 38.5
         },
         {
           "stop_id": 51815,
@@ -1537,7 +1537,7 @@
           "index": 9,
           "is_park_and_ride": false,
           "dist_from_orig_m": 33049,
-          "ride_min": 39.7,
+          "ride_min": 38.5,
           "return_min": 0.0
         },
         {
@@ -1550,8 +1550,8 @@
           "index": 3,
           "is_park_and_ride": false,
           "dist_from_orig_m": 14217,
-          "ride_min": 17.1,
-          "return_min": 33.0
+          "ride_min": 14.2,
+          "return_min": 24.0
         },
         {
           "stop_id": 13245,
@@ -1563,8 +1563,8 @@
           "index": 7,
           "is_park_and_ride": false,
           "dist_from_orig_m": 17731,
-          "ride_min": 21.3,
-          "return_min": 19.0
+          "ride_min": 23.2,
+          "return_min": 15.0
         },
         {
           "stop_id": 12899,
@@ -1576,8 +1576,8 @@
           "index": 4,
           "is_park_and_ride": false,
           "dist_from_orig_m": 15066,
-          "ride_min": 18.1,
-          "return_min": 31.0
+          "ride_min": 16.0,
+          "return_min": 22.5
         },
         {
           "stop_id": 13241,
@@ -1589,8 +1589,8 @@
           "index": 5,
           "is_park_and_ride": false,
           "dist_from_orig_m": 16376,
-          "ride_min": 19.7,
-          "return_min": 27.0
+          "ride_min": 18.8,
+          "return_min": 19.5
         },
         {
           "stop_id": 13243,
@@ -1602,8 +1602,8 @@
           "index": 6,
           "is_park_and_ride": false,
           "dist_from_orig_m": 16812,
-          "ride_min": 20.2,
-          "return_min": 25.0
+          "ride_min": 19.5,
+          "return_min": 18.5
         },
         {
           "stop_id": 13219,
@@ -1615,7 +1615,7 @@
           "index": 8,
           "is_park_and_ride": false,
           "dist_from_orig_m": 19937,
-          "ride_min": 23.9,
+          "ride_min": 27.0,
           "return_min": 12.0
         },
         {
@@ -1628,11 +1628,12 @@
           "index": 2,
           "is_park_and_ride": false,
           "dist_from_orig_m": 13607,
-          "ride_min": 16.3,
-          "return_min": 34.0
+          "ride_min": 14.0,
+          "return_min": 24.5
         }
       ],
       "stop_count": 9
     }
-  ]
+  ],
+  "schedule_fetched_at": "2026-10-21T11:36:22.332713+03:00"
 }
